@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval:bootstrap-current": "npm run build && node dist/evals/cases/bootstrap-current-repo-at-1872222/run.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1"

@@ -1,0 +1,228 @@
+{
+  "title": "Bootstrap engineering-context memory",
+  "summary": "Top-level memory for the CLI, knowledge graph service, proposal pipeline, SQLite storage, graph schema, and engineering-memory skill.",
+  "creates": {
+    "components": [
+      {
+        "id": "component.cli_app",
+        "name": "Engineering Context CLI",
+        "code_anchor": "apps/cli"
+      },
+      {
+        "id": "component.repo_context_detection",
+        "name": "Repo Context Detection",
+        "code_anchor": "apps/cli/repo-context.ts"
+      },
+      {
+        "id": "component.knowledge_graph_service",
+        "name": "Knowledge Graph Service",
+        "code_anchor": "libs/knowledge-graph/service.ts"
+      },
+      {
+        "id": "component.proposal_normalization",
+        "name": "Proposal Normalization",
+        "code_anchor": "libs/knowledge-graph/proposal.ts"
+      },
+      {
+        "id": "component.proposal_validation",
+        "name": "Proposal Validation",
+        "code_anchor": "libs/knowledge-graph/validate-proposal.ts"
+      },
+      {
+        "id": "component.graph_schema",
+        "name": "Graph Schema and Types",
+        "code_anchor": "libs/knowledge-graph/schema.ts, libs/knowledge-graph/claim.ts, libs/knowledge-graph/edge.ts, libs/knowledge-graph/scope.ts, libs/knowledge-graph/commit.ts"
+      },
+      {
+        "id": "component.sqlite_repository",
+        "name": "SQLite Repository",
+        "code_anchor": "libs/storage/sqlite/repository.ts"
+      },
+      {
+        "id": "component.sqlite_schema",
+        "name": "SQLite Schema and Database Setup",
+        "code_anchor": "libs/storage/sqlite/schema.ts, libs/storage/sqlite/db.ts, libs/storage/sqlite/migrate.ts"
+      },
+      {
+        "id": "component.engineering_memory_skill",
+        "name": "Engineering Memory Skill",
+        "code_anchor": "skills/engineering-memory/SKILL.md"
+      }
+    ],
+    "flows": [
+      {
+        "id": "flow.repo_initialization",
+        "name": "Repo initialization creates main and working scopes",
+        "touches": [
+          "component.cli_app",
+          "component.repo_context_detection",
+          "component.knowledge_graph_service",
+          "component.sqlite_repository",
+          "component.sqlite_schema",
+          "component.graph_schema"
+        ]
+      },
+      {
+        "id": "flow.proposal_validation",
+        "name": "Proposal validation normalizes compact input and validates graph shape",
+        "touches": [
+          "component.cli_app",
+          "component.knowledge_graph_service",
+          "component.proposal_normalization",
+          "component.proposal_validation"
+        ]
+      },
+      {
+        "id": "flow.proposal_apply",
+        "name": "Proposal apply creates a memory commit and writes records to working scope",
+        "touches": [
+          "component.cli_app",
+          "component.knowledge_graph_service",
+          "component.proposal_normalization",
+          "component.proposal_validation",
+          "component.sqlite_repository",
+          "component.graph_schema"
+        ]
+      },
+      {
+        "id": "flow.graph_read_search",
+        "name": "Graph read and search use main plus working graph view",
+        "touches": [
+          "component.cli_app",
+          "component.knowledge_graph_service",
+          "component.sqlite_repository"
+        ]
+      },
+      {
+        "id": "flow.compact_relationships",
+        "name": "Compact relationship fields become canonical graph edges",
+        "touches": [
+          "component.proposal_normalization",
+          "component.graph_schema"
+        ]
+      },
+      {
+        "id": "flow.skill_bootstrap",
+        "name": "Engineering memory skill guides shallow bootstrap proposal creation",
+        "touches": [
+          "component.engineering_memory_skill",
+          "component.cli_app"
+        ]
+      }
+    ],
+    "claims": [
+      {
+        "id": "claim.cli_thin_client",
+        "kind": "fact",
+        "text": "The CLI is a thin local client that routes commands, reads proposal files, detects repo context, prints human output, and delegates graph behavior to KnowledgeGraphService.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.cli_app",
+          "component.knowledge_graph_service"
+        ]
+      },
+      {
+        "id": "claim.repo_context_from_git",
+        "kind": "fact",
+        "text": "Repo context detection derives the repo root, remote URL, repo name, and default branch from Git, with local and main fallbacks.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.repo_context_detection",
+          "flow.repo_initialization"
+        ]
+      },
+      {
+        "id": "claim.service_is_graph_boundary",
+        "kind": "fact",
+        "text": "KnowledgeGraphService is the boundary used by the CLI for repo initialization, graph read/search, proposal validation, and proposal apply.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.knowledge_graph_service"
+        ]
+      },
+      {
+        "id": "claim.compact_fields_normalize_to_edges",
+        "kind": "fact",
+        "text": "Compact proposal fields such as contains, touches, about, evidenced_by, and supersedes are normalized into canonical graph edges before validation and apply.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.proposal_normalization",
+          "flow.compact_relationships"
+        ]
+      },
+      {
+        "id": "claim.validation_enforces_graph_rules",
+        "kind": "fact",
+        "text": "Proposal validation enforces allowed claim kinds, truth and intent values, source kinds, edge kinds, endpoint existence, metadata shape, and edge direction rules.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.proposal_validation",
+          "component.graph_schema",
+          "flow.proposal_validation"
+        ]
+      },
+      {
+        "id": "claim.apply_writes_working_commit",
+        "kind": "fact",
+        "text": "Applying a proposal normalizes and validates it, creates a memory commit, and writes new graph records into the working scope.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "flow.proposal_apply",
+          "component.knowledge_graph_service",
+          "component.sqlite_repository",
+          "component.graph_schema"
+        ]
+      },
+      {
+        "id": "claim.sqlite_persists_graph_records",
+        "kind": "fact",
+        "text": "The SQLite repository persists repos, graph scopes, memory commits, components, flows, claims, sources, edges, and graph memberships.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.sqlite_repository",
+          "component.sqlite_schema"
+        ]
+      },
+      {
+        "id": "claim.read_search_active_main_working",
+        "kind": "fact",
+        "text": "Graph read and search operate on active graph records from main plus working scopes and exclude superseded subjects from the active view.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "flow.graph_read_search",
+          "component.sqlite_repository"
+        ]
+      },
+      {
+        "id": "claim.sources_global_memberships_exclude_sources",
+        "kind": "fact",
+        "text": "Sources are stored globally, while graph memberships are created for components, flows, claims, and edges rather than sources.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.graph_schema",
+          "component.sqlite_repository"
+        ]
+      },
+      {
+        "id": "claim.skill_requires_shallow_validated_bootstrap",
+        "kind": "fact",
+        "text": "The engineering-memory skill tells agents to inspect a repo shallowly, create high-signal component/flow/claim memory, validate proposals, and avoid applying unless requested.",
+        "truth": "code_verified",
+        "intent": "intended",
+        "about": [
+          "component.engineering_memory_skill",
+          "flow.skill_bootstrap"
+        ]
+      }
+    ]
+  }
+}

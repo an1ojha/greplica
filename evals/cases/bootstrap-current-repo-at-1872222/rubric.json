@@ -1,0 +1,365 @@
+{
+  "case_id": "bootstrap-current-repo-at-1872222",
+  "target_repo_url": "git@github.com:Autoloops/engineering-context.git",
+  "target_commit": "1872222671c85b347950462bc65ef3da3611ed6e",
+  "score": {
+    "pass_threshold": 80,
+    "node_coverage_points": 50,
+    "edge_coverage_points": 15,
+    "quality_points": 35,
+    "quality_penalties": {
+      "noisy_structure_node_points": 3,
+      "noisy_structure_node_max": 12,
+      "bad_claim_points": 4,
+      "bad_claim_max": 16,
+      "bad_anchor_points": 3,
+      "bad_anchor_max": 9,
+      "depth_violation_points": 8,
+      "weak_graph_linking_points": 8
+    }
+  },
+  "judge": {
+    "instructions": [
+      "Judge whether the proposal is a good shallow bootstrap memory graph for this exact repo commit.",
+      "Do not compute a numeric score. Only classify expected nodes, expected edges, and quality issues.",
+      "Judge semantic equivalence, not exact IDs or exact wording.",
+      "A node can satisfy an expected item if it clearly represents the same concept, even with a different ID.",
+      "An edge can satisfy an expected relation if the proposal connects the same semantic subjects through inline compact fields or canonical edges.",
+      "Compact relationship fields are graph edges: flow.touches creates Flow -> Component touches edges, claim.about creates Claim -> Component/Flow about edges, component.contains creates Component -> Component contains edges, and flow.contains creates Flow -> Flow contains edges.",
+      "When judging expected edges, inspect compact relationship arrays directly. Do not require a separate creates.edges entry.",
+      "Do not mark a real existing source file or source folder as a bad anchor merely because it is broad. Bad anchors are fake paths, generated/dependency paths, .git paths, or useless anchors like the repo root.",
+      "Do not mark a combined top-level component as noisy merely because a more detailed rubric has separate expected nodes. Missing specificity belongs in node coverage, not quality penalties.",
+      "Penalize depth only when the proposal is clearly doing a deep audit instead of top-level bootstrap.",
+      "The proposal should be useful to a future coding agent that needs to understand this repo quickly."
+    ],
+    "actual_repo_facts": [
+      "This repo is a small TypeScript project named context-graph-memory.",
+      "The package exposes an ec binary that points to dist/apps/cli/main.js.",
+      "The TypeScript build compiles apps/**/*.ts and libs/**/*.ts into dist using tsconfig.build.json.",
+      "apps/cli/main.ts is the CLI entrypoint.",
+      "apps/cli/main.ts imports createLocalKnowledgeGraphService from libs/knowledge-graph/service.ts.",
+      "apps/cli/main.ts imports detectRepoContext from apps/cli/repo-context.ts.",
+      "The CLI constructs a KnowledgeGraphService once at startup and dispatches commands based on argv.",
+      "The CLI supports ec init.",
+      "ec init detects the repo context, calls service.initRepo, and prints repo/default branch/database/scope information.",
+      "The CLI supports ec graph read.",
+      "ec graph read detects repo context, calls service.readGraph, and prints components, flows, claims, sources, and edges.",
+      "The CLI supports ec graph search <query>.",
+      "ec graph search detects repo context, calls service.searchGraph, and prints matching graph records.",
+      "The CLI supports ec proposal validate <file>.",
+      "ec proposal validate reads a proposal JSON file, calls service.validateProposal, and reports validation errors.",
+      "The CLI supports ec proposal apply <file>.",
+      "ec proposal apply reads a proposal JSON file, calls service.applyProposal, and prints the created object counts.",
+      "The CLI is intentionally a thin local client: argument routing, file reading, repo detection, and human text output live there.",
+      "apps/cli/repo-context.ts uses git commands to detect the repo root.",
+      "apps/cli/repo-context.ts reads remote.origin.url when available and falls back to local:<repoRoot>.",
+      "apps/cli/repo-context.ts derives repo_name from the remote URL or local root basename.",
+      "apps/cli/repo-context.ts derives default_branch from refs/remotes/origin/HEAD and falls back to main.",
+      "libs/knowledge-graph/service.ts defines the KnowledgeGraphService class.",
+      "KnowledgeGraphService is the boundary the CLI calls for graph operations.",
+      "KnowledgeGraphService.initRepo upserts a repo and ensures a main scope and a working scope.",
+      "The main scope is named with the repo default branch.",
+      "The working scope is named working and parented to the main scope.",
+      "KnowledgeGraphService.readGraph loads the repo by remote URL and asks the repository for the current graph view.",
+      "KnowledgeGraphService.searchGraph loads the repo by remote URL and asks the repository to search the current graph view.",
+      "KnowledgeGraphService.validateProposal normalizes compact proposal input before validating it.",
+      "KnowledgeGraphService.applyProposal normalizes the proposal, validates it, requires the working scope, creates a memory commit, and writes proposal records.",
+      "applyProposal always writes the proposal records to the working scope in this current implementation.",
+      "createLocalKnowledgeGraphService wires KnowledgeGraphService to SqliteRepository and openDatabase.",
+      "libs/knowledge-graph/proposal.ts defines the canonical MemoryCommitProposal shape.",
+      "A proposal can create components, flows, claims, sources, and edges.",
+      "proposal.ts also defines compact proposal types that allow relationships inline on components, flows, and claims.",
+      "Compact component relationship fields include contains and supersedes.",
+      "Compact flow relationship fields include contains, touches, and supersedes.",
+      "Compact claim relationship fields include about, evidenced_by, and supersedes.",
+      "normalizeProposal removes compact relationship fields from nodes and converts them into canonical Edge records.",
+      "normalizeProposal generates deterministic edge IDs from kind/from/to fields.",
+      "normalizeProposal deduplicates generated edges by edge ID.",
+      "Explicit compact edges can be supplied with kind/from/to and are resolved to endpoint types.",
+      "Explicit canonical edges can also be supplied in creates.edges.",
+      "libs/knowledge-graph/validate-proposal.ts validates proposal structure.",
+      "validateProposal requires a non-empty title and a creates object.",
+      "validateProposal validates component IDs, names, and optional code_anchor type.",
+      "validateProposal validates flow IDs and names.",
+      "validateProposal validates claim IDs, kind, text, truth, and intent.",
+      "Allowed claim kinds are fact, requirement, decision, task, question, and risk.",
+      "Allowed claim truth values are code_verified, source_verified, and unknown.",
+      "Allowed claim intent values are intended, accidental, and unknown.",
+      "validateProposal validates source IDs, source kind, ref, and optional title.",
+      "Allowed source kinds currently include session, prd, doc, issue, pr, artifact, and code.",
+      "validateProposal validates edge IDs, endpoint types, endpoint existence, edge kind, allowed direction, and optional metadata.",
+      "libs/knowledge-graph/edge.ts defines allowed edge kinds: about, contains, touches, supersedes, and evidenced_by.",
+      "An about edge must go from Claim to Component or Flow.",
+      "A contains edge must go from Component to Component or Flow to Flow.",
+      "A touches edge must go from Flow to Component.",
+      "A supersedes edge must connect same-kind Component, Flow, or Claim nodes.",
+      "An evidenced_by edge must go from Claim to Source.",
+      "libs/knowledge-graph/schema.ts defines graph IDs, Component, Flow, Source, GraphObjectType, and MembershipSubjectType.",
+      "Component has id, name, and optional code_anchor.",
+      "Flow has id and name.",
+      "Source has id, kind, ref, and optional title.",
+      "MembershipSubjectType excludes source; memberships are for component, flow, claim, and edge.",
+      "libs/knowledge-graph/claim.ts defines ClaimKind, ClaimTruth, ClaimIntent, and Claim.",
+      "libs/knowledge-graph/scope.ts defines GraphScopeKind, GraphScope, and GraphMembership.",
+      "GraphScopeKind includes main, working, branch, session, and source, though current CLI flow uses main and working.",
+      "GraphMembership includes scope_id, subject_type, subject_id, and memory_commit_id.",
+      "libs/knowledge-graph/commit.ts defines MemoryCommit.",
+      "MemoryCommit includes scope_id, parent_memory_commit_id, optional git_commit_sha, title, summary, and created_at.",
+      "libs/storage/sqlite/db.ts opens the local SQLite database.",
+      "The default SQLite database lives under ENGINEERING_CONTEXT_HOME when set.",
+      "If ENGINEERING_CONTEXT_HOME is not set, the default home is ~/.engineering-context.",
+      "libs/storage/sqlite/migrate.ts applies schemaSql to the SQLite database.",
+      "libs/storage/sqlite/schema.ts defines tables for repos, graph_scopes, memory_commits, components, flows, claims, sources, edges, and graph_memberships.",
+      "The repos table stores id, remote_url, repo_name, and default_branch.",
+      "The graph_scopes table stores repo_id, kind, name, parent_scope_id, ref, and created_at.",
+      "The memory_commits table stores scope_id, parent_memory_commit_id, git_commit_sha, title, summary, and created_at.",
+      "The graph_memberships table links scope_id, subject_type, subject_id, and memory_commit_id.",
+      "The graph_memberships primary key is scope_id, subject_type, subject_id.",
+      "SqliteRepository.upsertRepo creates deterministic repo IDs from the remote URL.",
+      "SqliteRepository.ensureScope creates deterministic scope IDs from repo, kind, and name.",
+      "SqliteRepository.requireWorkingScope finds the working scope for a repo.",
+      "SqliteRepository.createMemoryCommit creates a new memory commit and links it to the previous commit in the same scope.",
+      "SqliteRepository.createProposalRecords inserts graph objects and creates graph memberships for components, flows, claims, and edges.",
+      "SqliteRepository.createProposalRecords inserts sources globally without graph memberships.",
+      "SqliteRepository.readGraphView reads current main and working scopes.",
+      "readGraphView loads memberships for current scopes, loads edges, computes active subjects, and filters edges whose endpoints are inactive.",
+      "readGraphView excludes subjects superseded by active supersedes edges.",
+      "readGraphView returns sources only when active edges point to them.",
+      "SqliteRepository.searchGraphView searches the current graph view by simple lowercase substring matching.",
+      "Search checks component name/code_anchor, flow name, claim text/kind, and source ref/title/kind.",
+      "skills/engineering-memory/SKILL.md is a skill for bootstrapping or updating engineering memory using ec.",
+      "The skill instructs agents to run ec init and ec graph read, inspect the repo shallowly, create a proposal, validate it, and apply only when asked.",
+      "The skill says bootstrap memory should be shallow and high-signal, not exhaustive.",
+      "The skill says sources are external artifacts and should not be created just because code was inspected during bootstrap.",
+      "The skill prefers important subsystems over tiny helpers.",
+      "The skill suggests roughly 3-8 components for a small repo unless more are clearly needed.",
+      "The skill prefers human workflows over function-level traces."
+    ],
+    "expected_nodes": [
+      {
+        "id": "component.cli_app",
+        "kind": "component",
+        "description": "CLI app that exposes ec commands and delegates to the service."
+      },
+      {
+        "id": "component.repo_context",
+        "kind": "component",
+        "description": "Repo context detection from Git remote, repo name, and default branch."
+      },
+      {
+        "id": "component.knowledge_graph_service",
+        "kind": "component",
+        "description": "KnowledgeGraphService boundary for init, read, search, validate, and apply."
+      },
+      {
+        "id": "component.proposal_normalization",
+        "kind": "component",
+        "description": "Proposal normalization that converts compact relationship fields into canonical edges."
+      },
+      {
+        "id": "component.proposal_validation",
+        "kind": "component",
+        "description": "Proposal validation for graph object fields, allowed values, references, and edge directions."
+      },
+      {
+        "id": "component.graph_schema",
+        "kind": "component",
+        "description": "Knowledge graph schema/types for components, flows, claims, sources, scopes, memberships, commits, and edges."
+      },
+      {
+        "id": "component.sqlite_repository",
+        "kind": "component",
+        "description": "SQLite repository/storage implementation that persists and reads graph data."
+      },
+      {
+        "id": "component.sqlite_schema",
+        "kind": "component",
+        "description": "SQLite database schema and migration/opening layer."
+      },
+      {
+        "id": "component.engineering_memory_skill",
+        "kind": "component",
+        "description": "Engineering-memory skill that guides shallow bootstrap proposal creation."
+      },
+      {
+        "id": "flow.init_repo",
+        "kind": "flow",
+        "description": "Repo initialization detects repo context and creates main plus working scopes."
+      },
+      {
+        "id": "flow.validate_proposal",
+        "kind": "flow",
+        "description": "Proposal validation flow normalizes compact proposal input and validates graph shape."
+      },
+      {
+        "id": "flow.apply_proposal",
+        "kind": "flow",
+        "description": "Proposal apply flow validates, creates a memory commit, and writes graph records to working scope."
+      },
+      {
+        "id": "flow.read_search_graph",
+        "kind": "flow",
+        "description": "Graph read/search flow reads the composed main plus working graph view."
+      },
+      {
+        "id": "flow.compact_edges",
+        "kind": "flow",
+        "description": "Compact relationship fields become canonical graph edges."
+      },
+      {
+        "id": "flow.bootstrap_skill",
+        "kind": "flow",
+        "description": "Engineering-memory skill guides shallow repo inspection and proposal creation."
+      },
+      {
+        "id": "claim.cli_thin_wrapper",
+        "kind": "claim",
+        "description": "CLI is a thin local client over KnowledgeGraphService."
+      },
+      {
+        "id": "claim.repo_context_git",
+        "kind": "claim",
+        "description": "Repo context detection derives remote URL, repo name, and default branch from Git."
+      },
+      {
+        "id": "claim.service_boundary",
+        "kind": "claim",
+        "description": "KnowledgeGraphService owns repo init, graph read/search, proposal validation, and proposal apply operations."
+      },
+      {
+        "id": "claim.compact_normalization",
+        "kind": "claim",
+        "description": "Compact proposal fields normalize into canonical edges."
+      },
+      {
+        "id": "claim.validation_rules",
+        "kind": "claim",
+        "description": "Validation enforces allowed claim values, source kinds, edge kinds, endpoint existence, and allowed edge direction."
+      },
+      {
+        "id": "claim.apply_working_scope",
+        "kind": "claim",
+        "description": "Proposal apply writes to the working scope through a memory commit."
+      },
+      {
+        "id": "claim.sqlite_persistence",
+        "kind": "claim",
+        "description": "SQLite repository persists repos, scopes, memory commits, graph objects, edges, and memberships."
+      },
+      {
+        "id": "claim.active_graph_view",
+        "kind": "claim",
+        "description": "Graph read/search use active records from main plus working and remove superseded subjects from the active view."
+      },
+      {
+        "id": "claim.sources_global",
+        "kind": "claim",
+        "description": "Sources are global and graph memberships exclude sources."
+      },
+      {
+        "id": "claim.skill_shallow_bootstrap",
+        "kind": "claim",
+        "description": "Engineering-memory skill instructs agents to create shallow, high-signal bootstrap proposals and validate them."
+      }
+    ],
+    "expected_edges": [
+      {
+        "id": "edge.init_touches_cli",
+        "from": "repo initialization flow",
+        "to": "CLI app component",
+        "description": "Repo initialization flow touches the CLI app."
+      },
+      {
+        "id": "edge.init_touches_repo_context",
+        "from": "repo initialization flow",
+        "to": "repo context detection component",
+        "description": "Repo initialization flow touches repo context detection."
+      },
+      {
+        "id": "edge.init_touches_service",
+        "from": "repo initialization flow",
+        "to": "KnowledgeGraphService component",
+        "description": "Repo initialization flow touches KnowledgeGraphService."
+      },
+      {
+        "id": "edge.init_touches_sqlite",
+        "from": "repo initialization flow",
+        "to": "SQLite repository/storage or SQLite schema component",
+        "description": "Repo initialization flow touches SQLite repository/storage or schema."
+      },
+      {
+        "id": "edge.validate_touches_normalization",
+        "from": "proposal validation flow",
+        "to": "proposal normalization component",
+        "description": "Proposal validation flow touches proposal normalization."
+      },
+      {
+        "id": "edge.validate_touches_validation",
+        "from": "proposal validation flow",
+        "to": "proposal validation component",
+        "description": "Proposal validation flow touches proposal validation."
+      },
+      {
+        "id": "edge.apply_touches_service",
+        "from": "proposal apply flow",
+        "to": "KnowledgeGraphService component",
+        "description": "Proposal apply flow touches KnowledgeGraphService."
+      },
+      {
+        "id": "edge.apply_touches_sqlite",
+        "from": "proposal apply flow",
+        "to": "SQLite repository/storage component",
+        "description": "Proposal apply flow touches SQLite repository/storage."
+      },
+      {
+        "id": "edge.apply_touches_schema",
+        "from": "proposal apply flow",
+        "to": "memory commits or graph schema component",
+        "description": "Proposal apply flow touches memory commits or graph schema."
+      },
+      {
+        "id": "edge.read_search_touches_service",
+        "from": "graph read/search flow",
+        "to": "KnowledgeGraphService component",
+        "description": "Graph read/search flow touches KnowledgeGraphService."
+      },
+      {
+        "id": "edge.read_search_touches_sqlite",
+        "from": "graph read/search flow",
+        "to": "SQLite repository/storage component",
+        "description": "Graph read/search flow touches SQLite repository/storage."
+      },
+      {
+        "id": "edge.compact_touches_normalization",
+        "from": "compact relationship fields flow",
+        "to": "proposal normalization component",
+        "description": "Compact edge flow touches proposal normalization."
+      },
+      {
+        "id": "edge.compact_touches_graph_edges",
+        "from": "compact relationship fields flow",
+        "to": "graph edge/schema model component",
+        "description": "Compact edge flow touches the graph edge/schema model. A grouped graph_schema component satisfies this relation."
+      },
+      {
+        "id": "edge.skill_touches_skill",
+        "from": "bootstrap skill flow",
+        "to": "engineering-memory skill component",
+        "description": "Bootstrap skill flow touches the engineering-memory skill."
+      },
+      {
+        "id": "edge.claims_about_subjects",
+        "from": "important claims",
+        "to": "relevant components and/or flows",
+        "description": "Important claims are about the relevant components and/or flows rather than left disconnected."
+      }
+    ],
+    "quality_rules": {
+      "noisy_structure_nodes": "Components and flows that do not help top-level repo orientation, such as package-lock, tsconfig, every tiny type file, generic source-code component, or single-helper-function flow. Do not count a real top-level subsystem as noisy only because it combines two expected concepts.",
+      "bad_claims": "Claims that are wrong, unsupported, duplicated, vague, too low-level, or not useful for future engineering work.",
+      "bad_anchors": "Anchors that point to fake paths, generated output, dependency folders, .git, or a vague repo root without a strong reason. A real file or folder anchor is acceptable if it points to the code where the represented component lives.",
+      "depth_violation": "The proposal is clearly too deep for bootstrap, such as component-per-file graphing, function-level tracing, or a full code audit.",
+      "weak_graph_linking": "The proposal creates nodes but does not meaningfully connect flows to components and claims to components/flows."
+    }
+  }
+}

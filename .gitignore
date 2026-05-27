@@ -1,2 +1,4 @@
 node_modules/
 dist/
+eval-runs/
+.env.local
