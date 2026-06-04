@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { createLocalKnowledgeGraphService } from "../../libs/knowledge-graph/service.js";
 import type { KnowledgeGraphService, RepoRef } from "../../libs/knowledge-graph/service.js";
 import { envVarSource, loadRepoEnv, type LoadedRepoEnv } from "../../libs/env/load-local-env.js";
 import { graphContextConfig } from "../../libs/knowledge-graph/graph-context/config.js";
 import { OpenAIEmbedder } from "../../libs/knowledge-graph/graph-context/openai-embedder.js";
+import { buildGraphFolderExport } from "../../libs/knowledge-graph/folder-export.js";
 import { detectRepoContext } from "./repo-context.js";
 
 interface CommandContext {
@@ -53,6 +54,16 @@ async function main(argv: string[]): Promise<void> {
     const { repo, service } = createCommandContext();
     const result = await service.contextGraph(repo, query);
     console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (area === "graph" && action === "export") {
+    const outputDir = requireFile(rest[0], "Usage: greplica graph export <dir>");
+    const { repo, service } = createCommandContext();
+    const files = buildGraphFolderExport(service.readGraph(repo));
+    writeGraphFolderExport(outputDir, files);
+    console.log(`Exported current graph view to ${outputDir}`);
+    console.log(`Files: ${files.length}`);
     return;
   }
 
@@ -166,6 +177,15 @@ function requireFile(file: string | undefined, usage: string): string {
   return file;
 }
 
+function writeGraphFolderExport(outputDir: string, files: Array<{ path: string; content: string }>): void {
+  mkdirSync(outputDir, { recursive: true });
+  for (const file of files) {
+    const outputPath = join(outputDir, file.path);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, file.content, "utf8");
+  }
+}
+
 function printSection<T extends { id: string }>(title: string, items: T[], format: (item: T) => string): void {
   console.log(`${title}: ${items.length}`);
   for (const item of items) {
@@ -193,6 +213,7 @@ function printHelp(): void {
   ${cli} doctor [--check-openai]
   ${cli} graph read
   ${cli} graph context <query>
+  ${cli} graph export <dir>
   ${cli} proposal validate <file>
   ${cli} proposal apply <file>`);
 }
