@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createLocalKnowledgeGraphService } from "../../libs/knowledge-graph/service.js";
 import type { KnowledgeGraphService, RepoRef } from "../../libs/knowledge-graph/service.js";
 import { envVarSource, loadRepoEnv, type LoadedRepoEnv } from "../../libs/env/load-local-env.js";
-import { graphContextConfig } from "../../libs/knowledge-graph/graph-context/config.js";
-import { OpenAIEmbedder } from "../../libs/knowledge-graph/graph-context/openai-embedder.js";
+import {
+  ensureGreplicaConfig,
+  greplicaConfigPath,
+  updateEmbeddingConfig,
+  type EmbeddingConfig,
+  type EmbeddingProvider,
+  type GreplicaConfig,
+} from "../../libs/config/greplica-config.js";
+import { graphContextConfigFromGreplicaConfig } from "../../libs/knowledge-graph/graph-context/config.js";
+import { createEmbedder } from "../../libs/knowledge-graph/graph-context/embedder.js";
 import { compactGraphContextResult, renderGraphContextMarkdown } from "../../libs/knowledge-graph/graph-context/render.js";
 import { buildGraphFolderExport } from "../../libs/knowledge-graph/folder-export.js";
 import { detectRepoContext } from "./repo-context.js";
@@ -13,13 +21,24 @@ import { detectRepoContext } from "./repo-context.js";
 interface CommandContext {
   repo: RepoRef;
   env: LoadedRepoEnv;
+  config: GreplicaConfig;
   service: KnowledgeGraphService;
 }
 
 async function main(argv: string[]): Promise<void> {
   const [area, action, ...rest] = argv;
 
-  if (area === "init" && action === undefined) {
+  if (area === "init") {
+    const initArgs = [action, ...rest].filter((arg): arg is string => arg !== undefined);
+    const provider = parseOptionalEmbeddingSelection(initArgs);
+    let configuredEmbedding: EmbeddingConfig | undefined;
+    if (provider !== undefined) {
+      const config = updateEmbeddingConfig({ provider });
+      configuredEmbedding = config.embedding;
+      console.log(`Config: ${displayConfigPath()}`);
+      printEmbeddingConfig(config.embedding);
+    }
+
     const { repo, service } = createCommandContext();
     const result = service.initRepo(repo);
     console.log(result.created ? "Initialized Greplica memory." : "Greplica memory already initialized.");
@@ -29,6 +48,14 @@ async function main(argv: string[]): Promise<void> {
     console.log(`Database: ${result.database_path}`);
     console.log(`Main scope: ${result.main_scope_id}`);
     console.log(`Working scope: ${result.working_scope_id}`);
+    if (configuredEmbedding !== undefined) {
+      if (!(await checkEmbeddings(configuredEmbedding))) process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (area === "config") {
+    runConfigCommand([action, ...rest].filter((arg): arg is string => arg !== undefined));
     return;
   }
 
@@ -116,8 +143,9 @@ async function main(argv: string[]): Promise<void> {
 function createCommandContext(): CommandContext {
   const repo = detectRepoContext();
   const env = loadRepoEnv(repo.repo_root ?? process.cwd());
-  const service = createLocalKnowledgeGraphService();
-  return { repo, env, service };
+  const config = ensureGreplicaConfig();
+  const service = createLocalKnowledgeGraphService(graphContextConfigFromGreplicaConfig(config));
+  return { repo, env, config, service };
 }
 
 async function runDoctor(args: string[]): Promise<void> {
@@ -150,30 +178,84 @@ async function runDoctor(args: string[]): Promise<void> {
     console.log(error instanceof Error ? error.message : String(error));
   }
 
-  const source = envVarSource("OPENAI_API_KEY", context.env);
-  if (source === undefined) {
-    ready = false;
-    console.log("OPENAI_API_KEY: missing");
-    console.log("Set OPENAI_API_KEY in the shell, repo-root .env.local, or repo-root .env.");
-  } else if (source.kind === "environment") {
-    console.log("OPENAI_API_KEY: found in environment");
-  } else {
-    console.log(`OPENAI_API_KEY: found in ${source.path}`);
-  }
+  console.log(`Config: ${displayConfigPath()}`);
+  printEmbeddingConfig(context.config.embedding);
 
-  if (source !== undefined && args.includes("--check-openai")) {
-    try {
-      const embedder = new OpenAIEmbedder(graphContextConfig.embedding);
-      await embedder.embed("greplica doctor");
-      console.log("OpenAI embeddings: ok");
-    } catch (error: unknown) {
+  if (context.config.embedding.provider === "openai") {
+    const source = envVarSource("OPENAI_API_KEY", context.env);
+    if (source === undefined) {
       ready = false;
-      console.log("OpenAI embeddings: failed");
-      console.log(error instanceof Error ? error.message : String(error));
+      console.log("OPENAI_API_KEY: missing");
+      console.log("Set OPENAI_API_KEY in the shell, repo-root .env.local, or repo-root .env.");
+    } else if (source.kind === "environment") {
+      console.log("OPENAI_API_KEY: found in environment");
+    } else {
+      console.log(`OPENAI_API_KEY: found in ${source.path}`);
     }
   }
 
+  if (args.includes("--check-embeddings") || args.includes("--check-openai")) {
+    ready = (await checkEmbeddings(context.config.embedding)) && ready;
+  }
+
   process.exitCode = ready ? 0 : 1;
+}
+
+async function checkEmbeddings(config: EmbeddingConfig): Promise<boolean> {
+  try {
+    console.log(`Checking ${config.provider} embeddings...`);
+    const embedder = createEmbedder(config);
+    await embedder.embed("greplica embeddings check");
+    console.log(`${config.provider} embeddings: ok`);
+    return true;
+  } catch (error: unknown) {
+    console.log(`${config.provider} embeddings: failed`);
+    console.log(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+function runConfigCommand(args: string[]): void {
+  if (args.length > 0) throw new Error("Usage: greplica config");
+
+  const config = ensureGreplicaConfig();
+  console.log("Greplica config");
+  console.log(`Path: ${displayConfigPath()}`);
+  console.log("");
+  console.log("Edit this JSON to change Greplica defaults:");
+  console.log(JSON.stringify(config, null, 2));
+  console.log("");
+  console.log("Allowed embedding.provider values:");
+  console.log("- local");
+  console.log("- openai");
+  console.log("");
+  console.log("Common embedding examples:");
+  console.log("- local MPNet base: provider=local, model=all-mpnet-base-v2, dimensions=768, batchSize=16");
+  console.log("- local MiniLM: provider=local, model=all-MiniLM-L6-v2, dimensions=384, batchSize=32");
+  console.log("- OpenAI small: provider=openai, model=text-embedding-3-small, dimensions=1536, batchSize=100");
+}
+
+function parseOptionalEmbeddingSelection(args: string[]): EmbeddingProvider | undefined {
+  const local = args.includes("--local");
+  const openai = args.includes("--openai");
+  if (local && openai) throw new Error("Use either --local or --openai, not both.");
+  if (!local && !openai) {
+    if (args.length === 0) return undefined;
+    throw new Error("Usage: greplica init [--local|--openai]");
+  }
+  if (args.length !== 1) throw new Error("Usage: greplica init [--local|--openai]");
+  return local ? "local" : "openai";
+}
+
+function printEmbeddingConfig(config: EmbeddingConfig): void {
+  console.log(`Embedding provider: ${config.provider}`);
+  console.log(`Embedding model: ${config.model}`);
+  console.log(`Embedding dimensions: ${config.dimensions}`);
+  console.log(`Embedding batch size: ${config.batchSize}`);
+}
+
+function displayConfigPath(): string {
+  return resolve(greplicaConfigPath());
 }
 
 function readProposal(file: string): unknown {
@@ -227,7 +309,9 @@ function field(item: object, key: string): string {
 function printHelp(): void {
   const cli = basename(process.argv[1] ?? "greplica");
   console.log(`Usage:
-  ${cli} doctor [--check-openai]
+  ${cli} init [--local|--openai]
+  ${cli} config
+  ${cli} doctor [--check-embeddings]
   ${cli} graph read
   ${cli} graph context <query> [--json|--debug]
   ${cli} graph export <dir>

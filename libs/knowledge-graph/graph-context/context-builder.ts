@@ -10,7 +10,7 @@ import {
   contextDocumentKey,
   type ContextDocument,
 } from "./documents.js";
-import { OpenAIEmbedder } from "./openai-embedder.js";
+import { createEmbedder, type Embedder } from "./embedder.js";
 import { float32ArrayToBuffer, bufferToFloat32Array, cosineSimilarity } from "./vector.js";
 import { scoreBm25 } from "./bm25.js";
 import { scoreExact } from "./exact.js";
@@ -37,7 +37,7 @@ export class GraphContextBuilder {
     const flowDocuments = buildFlowDocuments(graph);
     const evidenceByClaim = buildEvidenceByClaim(graph);
     const documents = [...claimDocuments, ...componentDocuments, ...flowDocuments];
-    const embedder = new OpenAIEmbedder(config.embedding);
+    const embedder = createEmbedder(config.embedding);
     const embeddingStatus = await this.ensureEmbeddings(repoId, documents, embedder, config);
     if (options.warnOnCreatedEmbeddings && embeddingStatus.created > 0) {
       console.warn(`graph context created ${embeddingStatus.created} missing embedding(s); proposal apply should normally pre-create them.`);
@@ -86,14 +86,14 @@ export class GraphContextBuilder {
       ...buildComponentDocuments(graph),
       ...buildFlowDocuments(graph),
     ];
-    const embedder = new OpenAIEmbedder(config.embedding);
+    const embedder = createEmbedder(config.embedding);
     return this.ensureEmbeddings(repoId, documents, embedder, config);
   }
 
   private async ensureEmbeddings(
     repoId: string,
     documents: ContextDocument[],
-    embedder: OpenAIEmbedder,
+    embedder: Embedder,
     config: GraphContextConfig,
   ): Promise<EmbeddingStatus> {
     const existing = new Set(

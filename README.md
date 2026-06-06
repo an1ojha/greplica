@@ -6,7 +6,7 @@ Greplica (`greplica`) stores lightweight codebase memory for coding agents. The 
 
 - Node.js and npm.
 - Build tools needed by native npm packages such as `better-sqlite3`.
-- An OpenAI API key for graph context search and proposal application.
+- An embedding provider for graph context search and proposal application. Local embeddings run in-process by default; OpenAI embeddings require `OPENAI_API_KEY` when configured.
 
 ## Agent Setup
 
@@ -18,7 +18,7 @@ Install Greplica for this repo.
 Goal:
 - Install the `greplica` CLI from the Greplica GitHub repo.
 - Install the bundled Greplica skills into this coding agent's user-level skills directory.
-- Verify the CLI can see this repo and can access OpenAI embeddings when configured.
+- Ask me whether to use local or OpenAI embeddings, then initialize Greplica with that choice.
 
 Use this repo unless I provide a different URL or branch:
 
@@ -60,14 +60,23 @@ greplica-bootstrap
 greplica-update-working-memory
 ```
 
-After installing skills, verify the install:
+Before running Greplica init, ask me whether to use local embeddings or OpenAI embeddings.
+
+Local is the default recommendation: it runs on this laptop without an API key and downloads the local embedding model into `~/.greplica/models`. OpenAI may be faster or higher quality, but requires `OPENAI_API_KEY`.
+
+If I choose local, run:
 
 ```bash
-greplica doctor
-greplica doctor --check-openai
+greplica init --local
 ```
 
-If `greplica doctor --check-openai` reports that `OPENAI_API_KEY` is missing or invalid, stop and ask me to set it. Do not ask me to paste the key into chat. I can set it either in my shell before starting the coding agent, or in this repo's `.env.local` file:
+If I choose OpenAI, verify `OPENAI_API_KEY` is available in the environment, this repo's `.env.local`, or this repo's `.env`, then run:
+
+```bash
+greplica init --openai
+```
+
+If OpenAI is selected and `OPENAI_API_KEY` is missing or invalid, stop and ask me to set it. Do not ask me to paste the key into chat. I can set it either in my shell before starting the coding agent, or in this repo's `.env.local` file:
 
 ```txt
 OPENAI_API_KEY=...
@@ -76,6 +85,8 @@ OPENAI_API_KEY=...
 After setup, tell me:
 - where the CLI was installed
 - where the two skills were installed
+- which embedding mode was selected
+- where the Greplica config file is
 - whether I need to restart the coding agent for skills to appear
 - how to invoke `greplica-bootstrap` and `greplica-update-working-memory`
 ````
@@ -98,6 +109,51 @@ Do not run `greplica doctor` before normal Greplica commands. Use the intended c
 
 ## Configuration
 
+`greplica` stores default CLI config at `~/.greplica/config.json`:
+
+```json
+{
+  "version": 1,
+  "embedding": {
+    "provider": "local",
+    "model": "all-mpnet-base-v2",
+    "dimensions": 768,
+    "batchSize": 16
+  }
+}
+```
+
+Print the config path, current JSON, allowed providers, and common examples:
+
+```bash
+greplica config
+```
+
+Edit the printed JSON file directly to change the selected embedding provider, model, dimensions, or batch size. For example:
+
+```json
+{
+  "version": 1,
+  "embedding": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "dimensions": 1536,
+    "batchSize": 100
+  }
+}
+```
+
+Allowed `embedding.provider` values are `local` and `openai`.
+
+`greplica init --local` and `greplica init --openai` also update the same config file to provider defaults while initializing repo memory and checking that the selected embedding provider is ready.
+
+Local embeddings run in-process with a quantized Hugging Face Transformers model and cache model files under `~/.greplica/models`. The first `greplica init --local` or local embedding check downloads the configured model; subsequent runs reuse the cache.
+
+Useful local model choices:
+
+- `all-mpnet-base-v2`, 768 dimensions, default local model.
+- `all-MiniLM-L6-v2`, 384 dimensions, smaller local option.
+
 `greplica` looks for `OPENAI_API_KEY` in this order:
 
 1. the process environment
@@ -111,7 +167,9 @@ Memory is stored in `~/.greplica/graph.db` by default. Set `GREPLICA_HOME` only 
 ## Commands
 
 ```bash
-greplica doctor [--check-openai]
+greplica init [--local|--openai]
+greplica config
+greplica doctor [--check-embeddings]
 greplica graph read
 greplica graph context "<query>" [--json|--debug]
 greplica proposal validate <proposal.json>

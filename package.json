@@ -21,6 +21,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^11.9.1"
   },
   "devDependencies": {

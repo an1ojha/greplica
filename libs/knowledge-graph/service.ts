@@ -4,6 +4,7 @@ import type { Claim } from "./claim.js";
 import type { Edge } from "./edge.js";
 import type { Component, Flow, Source } from "./schema.js";
 import { GraphContextBuilder } from "./graph-context/context-builder.js";
+import { graphContextConfig, type GraphContextConfig } from "./graph-context/config.js";
 import type { EmbeddingStatus, GraphContextResult } from "./graph-context/types.js";
 import { defaultDatabasePath, openDatabase } from "../storage/sqlite/db.js";
 import type { SqliteRepository } from "../storage/sqlite/repository.js";
@@ -50,6 +51,7 @@ export interface ApplyProposalResult {
 export class KnowledgeGraphService {
   constructor(
     private readonly repository: SqliteRepository,
+    private readonly contextConfig: GraphContextConfig = graphContextConfig,
     private readonly contextBuilder = new GraphContextBuilder(repository),
   ) {}
 
@@ -86,6 +88,7 @@ export class KnowledgeGraphService {
   async contextGraph(input: RepoRef, query: string): Promise<GraphContextResult> {
     const initialized = this.ensureInitialized(input);
     return this.contextBuilder.build(initialized.repo_id, this.repository.readGraphView(initialized.repo_id), query, {
+      config: this.contextConfig,
       warnOnCreatedEmbeddings: true,
     });
   }
@@ -114,6 +117,7 @@ export class KnowledgeGraphService {
     const embeddingStatus = await this.contextBuilder.ensureForGraph(
       initialized.repo_id,
       this.repository.readGraphView(initialized.repo_id),
+      this.contextConfig,
     );
 
     return {
@@ -135,6 +139,6 @@ export class KnowledgeGraphService {
   }
 }
 
-export function createLocalKnowledgeGraphService(): KnowledgeGraphService {
-  return new KnowledgeGraphService(new SqliteKnowledgeGraphRepository(openDatabase()));
+export function createLocalKnowledgeGraphService(config: GraphContextConfig = graphContextConfig): KnowledgeGraphService {
+  return new KnowledgeGraphService(new SqliteKnowledgeGraphRepository(openDatabase()), config);
 }

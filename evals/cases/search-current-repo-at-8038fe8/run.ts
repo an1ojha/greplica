@@ -24,6 +24,10 @@ interface RunContext {
   targetRepoDir: string;
   targetRepoUrl: string;
   greplicaHomeDir: string;
+  embeddingProvider: "local" | "openai" | undefined;
+  embeddingModel: string | undefined;
+  embeddingDimensions: number | undefined;
+  embeddingBatchSize: number | undefined;
   proposalPath: string;
   rubricPath: string;
   greplicaCommand: string[];
@@ -123,7 +127,7 @@ function main(): void {
   validateRubric(rubric);
 
   const setupCommands = [
-    runProductCommand(context, "init"),
+    runInitCommand(context),
     runProductCommand(context, "proposal", "validate", context.proposalPath),
     runProductCommand(context, "proposal", "apply", context.proposalPath),
   ];
@@ -152,6 +156,10 @@ function prepareRun(): RunContext {
   const targetRepoDir = resolve(runDir, "target-repo");
   const targetRepoUrl = process.env.GREPLICA_EVAL_TARGET_REPO_URL ?? repoRoot;
   const greplicaHomeDir = resolve(runDir, "greplica-home");
+  const embeddingProvider = parseEmbeddingProvider(process.env.GREPLICA_EVAL_EMBEDDING_PROVIDER);
+  const embeddingModel = parseOptionalString(process.env.GREPLICA_EVAL_EMBEDDING_MODEL, "GREPLICA_EVAL_EMBEDDING_MODEL");
+  const embeddingDimensions = parseOptionalPositiveInteger(process.env.GREPLICA_EVAL_EMBEDDING_DIMENSIONS, "GREPLICA_EVAL_EMBEDDING_DIMENSIONS");
+  const embeddingBatchSize = parseOptionalPositiveInteger(process.env.GREPLICA_EVAL_EMBEDDING_BATCH_SIZE, "GREPLICA_EVAL_EMBEDDING_BATCH_SIZE");
 
   mkdirSync(runDir, { recursive: true });
   mkdirSync(greplicaHomeDir, { recursive: true });
@@ -162,10 +170,34 @@ function prepareRun(): RunContext {
     targetRepoDir,
     targetRepoUrl,
     greplicaHomeDir,
+    embeddingProvider,
+    embeddingModel,
+    embeddingDimensions,
+    embeddingBatchSize,
     proposalPath: resolve(repoRoot, "evals/cases/search-current-repo-at-8038fe8/proposal.json"),
     rubricPath: resolve(repoRoot, "evals/cases/search-current-repo-at-8038fe8/rubric.json"),
     greplicaCommand: ["node", resolve(repoRoot, "dist/apps/cli/main.js")],
   };
+}
+
+function parseEmbeddingProvider(value: string | undefined): "local" | "openai" | undefined {
+  if (value === undefined || value.trim().length === 0) return undefined;
+  if (value === "local" || value === "openai") return value;
+  throw new Error("GREPLICA_EVAL_EMBEDDING_PROVIDER must be local or openai.");
+}
+
+function parseOptionalString(value: string | undefined, name: string): string | undefined {
+  if (value === undefined || value.trim().length === 0) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) throw new Error(`${name} must be a non-empty string.`);
+  return trimmed;
+}
+
+function parseOptionalPositiveInteger(value: string | undefined, name: string): number | undefined {
+  if (value === undefined || value.trim().length === 0) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive integer.`);
+  return parsed;
 }
 
 function prepareTargetRepo(context: RunContext): void {
@@ -362,6 +394,38 @@ function runProductCommand(context: RunContext, ...args: string[]): CommandResul
   return run([...context.greplicaCommand, ...args], context.targetRepoDir, {
     ...process.env,
     GREPLICA_HOME: context.greplicaHomeDir,
+  });
+}
+
+function runInitCommand(context: RunContext): CommandResult {
+  const result = context.embeddingProvider === undefined
+    ? runProductCommand(context, "init")
+    : runProductCommand(context, "init", `--${context.embeddingProvider}`);
+  if (result.exit_code === 0) writeEvalEmbeddingOverride(context);
+  return result;
+}
+
+function writeEvalEmbeddingOverride(context: RunContext): void {
+  if (
+    context.embeddingModel === undefined &&
+    context.embeddingDimensions === undefined &&
+    context.embeddingBatchSize === undefined
+  ) {
+    return;
+  }
+
+  const configPath = resolve(context.greplicaHomeDir, "config.json");
+  const config = readJson<Record<string, unknown>>(configPath);
+  const embedding = isRecord(config.embedding) ? config.embedding : {};
+
+  writeJson(configPath, {
+    ...config,
+    embedding: {
+      ...embedding,
+      ...(context.embeddingModel === undefined ? {} : { model: context.embeddingModel }),
+      ...(context.embeddingDimensions === undefined ? {} : { dimensions: context.embeddingDimensions }),
+      ...(context.embeddingBatchSize === undefined ? {} : { batchSize: context.embeddingBatchSize }),
+    },
   });
 }
 

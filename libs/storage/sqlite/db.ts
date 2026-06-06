@@ -1,12 +1,11 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { greplicaHome } from "../../config/greplica-home.js";
 import { migrate } from "./migrate.js";
 
 export function defaultDatabasePath(): string {
-  const home = process.env.GREPLICA_HOME ?? process.env.ENGINEERING_CONTEXT_HOME ?? join(homedir(), ".greplica");
-  return join(home, "graph.db");
+  return join(greplicaHome(), "graph.db");
 }
 
 export function openDatabase(path = defaultDatabasePath()): Database.Database {
