@@ -43,12 +43,13 @@ greplica install --platform claude --embedding local
 
 Do not manually copy skills. Let the installer do it.
 
-After installation, tell me where the skills were installed, which embedding mode was configured, and whether I should restart the agent. Then tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want always-on repo guidance.
+After installation, tell me where the skills were installed, which embedding mode was configured, whether I should restart the agent, and how to switch later to OpenAI embeddings if I want that.
 
 Then tell me how to use Greplica:
-- Run "Use greplica-bootstrap for this repo." once per repo to initialize memory.
-- During work, the agent will use `greplica graph context "<question>"` when it needs repo context that is not already in the conversation.
-- Near the end of useful sessions, run "Use greplica-update-working-memory for this session." to save decisions, constraints, changed flows, and follow-up work.
+- Run "Use greplica-bootstrap for this repo." once per repo to initialize memory. If repo memory already exists, do not run it again.
+- During work, use `greplica graph context "<question>"` to fetch relevant repo context, including prior working memory, before broad manual exploration.
+- Near the end of useful sessions, run "Use greplica-update-working-memory for this session." so durable decisions, constraints, changed flows, and follow-up work stay up to date.
+- Tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want always-on repo guidance.
 `````
 
 ## Using Greplica

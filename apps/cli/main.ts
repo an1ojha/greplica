@@ -322,10 +322,15 @@ function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>)
   console.log(`- config: ${result.configFile}`);
   console.log(`- database: ${result.databasePath}`);
   console.log("");
-  console.log("Next:");
-  console.log("- Use greplica-bootstrap once per repo to initialize memory.");
-  console.log("- During work, use greplica graph context \"<question>\" when repo context is not already in the conversation.");
-  console.log("- Near the end of useful sessions, use greplica-update-working-memory to save decisions, constraints, changed flows, and follow-up work.");
+  console.log("How to use Greplica:");
+  console.log("- Run greplica-bootstrap once per repo to initialize memory. If repo memory already exists, you do not need to run it again.");
+  console.log("- During work, use greplica graph context \"<question>\" to fetch relevant repo context, including prior working memory, before broad manual exploration.");
+  console.log("- Near the end of useful sessions, use greplica-update-working-memory so durable decisions, constraints, changed flows, and follow-up work stay up to date.");
+  if (result.embedding === "local") {
+    console.log(`- To switch later to OpenAI embeddings, run: greplica install --platform ${result.platform} --embedding openai`);
+  } else {
+    console.log(`- To switch later to local embeddings, run: greplica install --platform ${result.platform} --embedding local`);
+  }
   console.log(`- Add the Greplica guidance block to ${result.platform === "codex" ? "AGENTS.md" : "CLAUDE.md"} yourself if you want always-on repo guidance.`);
   for (const note of result.notes) console.log(`- ${note}`);
 }
