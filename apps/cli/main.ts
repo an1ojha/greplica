@@ -323,16 +323,16 @@ function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>)
   console.log(`- database: ${result.databasePath}`);
   console.log("");
   console.log("How to use Greplica:");
-  console.log("- Run greplica-bootstrap once per repo to initialize memory. If repo memory already exists, you do not need to run it again.");
-  console.log("- During work, use greplica graph context \"<question>\" to fetch relevant repo context, including prior working memory, before broad manual exploration.");
-  console.log("- Near the end of useful sessions, use greplica-update-working-memory so durable decisions, constraints, changed flows, and follow-up work stay up to date.");
+  console.log("- If this repo has not been initialized yet, ask your coding agent to run greplica-bootstrap for this repo. You only need to do this once per repo.");
+  console.log("- After that, your coding agent can use greplica graph context \"<question>\" inside tasks to fetch relevant repo context, including prior working memory, before broad manual exploration.");
+  console.log("- Near the end of a useful session, ask your coding agent to run greplica-update-working-memory so decisions, changed flows, constraints, and follow-up work are stored.");
   if (result.embedding === "local") {
-    console.log(`- To switch later to OpenAI embeddings, run: greplica install --platform ${result.platform} --embedding openai`);
+    console.log(`- OpenAI embeddings are also available if you want better retrieval quality later: greplica install --platform ${result.platform} --embedding openai`);
   } else {
-    console.log(`- To switch later to local embeddings, run: greplica install --platform ${result.platform} --embedding local`);
+    console.log(`- Local embeddings are also available if you want to switch back later: greplica install --platform ${result.platform} --embedding local`);
   }
-  console.log(`- Add the Greplica guidance block to ${result.platform === "codex" ? "AGENTS.md" : "CLAUDE.md"} yourself if you want always-on repo guidance.`);
   for (const note of result.notes) console.log(`- ${note}`);
+  console.log(`- IMPORTANT: add the Greplica guidance block to ${result.platform === "codex" ? "AGENTS.md" : "CLAUDE.md"} yourself if you want the agent to keep using Greplica automatically.`);
 }
 
 function installUsage(): string {

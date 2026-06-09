@@ -17,16 +17,10 @@ Copy this prompt into the coding agent from the repository you want to use with 
 `````txt
 Install Greplica for this repo.
 
-First install the CLI from the Greplica repo. If the package has already been published, use:
+First install the CLI:
 
 ```bash
 npm install -g greplica
-```
-
-Otherwise install the current checkout:
-
-```bash
-npm install -g <path-to-greplica>
 ```
 
 Then run exactly one of these commands.
@@ -46,10 +40,11 @@ Do not manually copy skills. Let the installer do it.
 After installation, tell me where the skills were installed, which embedding mode was configured, whether I should restart the agent, and how to switch later to OpenAI embeddings if I want that.
 
 Then tell me how to use Greplica:
-- Run "Use greplica-bootstrap for this repo." once per repo to initialize memory. If repo memory already exists, do not run it again.
-- During work, use `greplica graph context "<question>"` to fetch relevant repo context, including prior working memory, before broad manual exploration.
-- Near the end of useful sessions, run "Use greplica-update-working-memory for this session." so durable decisions, constraints, changed flows, and follow-up work stay up to date.
-- Tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want always-on repo guidance.
+- If this repo has not been initialized yet, tell me to run "Use greplica-bootstrap for this repo." once. If repo memory already exists, do not run it again.
+- Tell me that during work, the agent can use `greplica graph context "<question>"` to fetch relevant repo context, including prior working memory, before broad manual exploration.
+- Tell me that near the end of a useful session, I should run "Use greplica-update-working-memory for this session." so decisions, changed flows, constraints, and follow-up work are stored.
+- Tell me that OpenAI embeddings are also available later by rerunning `greplica install --platform <codex-or-claude> --embedding openai`.
+- IMPORTANT: tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want the agent to keep using Greplica automatically.
 `````
 
 ## Using Greplica
@@ -70,33 +65,25 @@ Do not run `greplica doctor` before normal Greplica commands. Use the intended c
 
 ## Updating Greplica
 
-If Greplica was installed from a persistent source checkout, update it with:
+Update the published package with:
 
 ```bash
-GREPLICA_SRC="${GREPLICA_SRC:-$HOME/.greplica/src/greplica}"
-before="$(git -C "$GREPLICA_SRC" rev-parse HEAD)"
-git -C "$GREPLICA_SRC" pull --ff-only --prune
-after="$(git -C "$GREPLICA_SRC" rev-parse HEAD)"
-
-if [ "$before" != "$after" ]; then
-  npm install --prefix "$GREPLICA_SRC"
-  npm install -g "$GREPLICA_SRC"
-fi
+npm install -g greplica@latest
 ```
 
-If the checkout changed, copy the two skill folders from `$GREPLICA_SRC/skills/` over the installed skill folders again so agent instructions stay current.
+Then rerun the platform install command so the latest bundled skills are copied into your coding-agent skill directory:
 
-Current source-install benchmark on this machine:
+```bash
+greplica install --platform codex --embedding local
+```
 
-- Fresh documented clone/install/build/global-install flow: about 9.7s.
-- Fresh persistent-checkout flow without the redundant explicit build: about 9.0s.
-- Full cold start after deleting `~/.greplica`, with local embedding pre-warm via `greplica init --local`: about 38.9s.
-- Optimized local cold start without pre-warming embeddings: about 7.6s; first graph-context query pays the local model download later.
-- No-op update with unconditional reinstall: about 9.2s.
-- No-op update with the conditional reinstall command above: about 2.9s.
-- Direct `npm install -g git+ssh://...` is not reliable yet because the git dependency prepare step can fail before `tsc` is available.
+or:
 
-The better long-term install path is to publish or attach a built package artifact that already contains `dist/`, `skills/`, and `README.md`. Then install/update can become a single `npm install -g <package-or-tarball>` command without cloning the repo or compiling TypeScript during user setup.
+```bash
+greplica install --platform claude --embedding local
+```
+
+If the install output says to restart your coding agent, do that so the refreshed skills are picked up.
 
 ## Configuration
 
