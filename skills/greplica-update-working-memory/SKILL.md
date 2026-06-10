@@ -35,13 +35,14 @@ Use the current session as context, but verify durable code facts against files 
 When you have a transcript file, run this transcript extraction workflow before writing the proposal:
 
 1. Get the transcript line count, then read every line in chunks if needed.
-2. Build a candidate inventory from the transcript before relying on code diffs or final assistant summaries.
-3. Put candidates into buckets: code facts, flow facts, user constraints, rationale, trade-offs/rejected alternatives, negative decisions/do-not-do rules, deferred work/future work, drift, and eval/fixture/testing/process constraints.
-4. For each candidate, record the source line/message, intended memory role, and whether it should be code_verified, source_verified, unknown, or dropped.
-5. Drop only candidates that are transient, duplicate, unsupported, obvious from local code, or not useful to a future agent.
-6. Keep explicit user corrections, "do not" statements, "not built" statements, and eval/process constraints unless they are clearly transient.
-7. Write one focused claim per kept durable candidate. Do not merge candidates from different buckets into one broad claim.
-8. Before validating, review dropped candidates and re-add any durable session decision that would be hard to recover from code alone.
+2. Build a scratch candidate inventory from the transcript before relying on code diffs or final assistant summaries. Do this even when the final patch is small.
+3. Put candidates into buckets: explored existing repo facts, changed code facts, flow facts, user constraints, rationale, trade-offs/rejected alternatives, negative decisions/do-not-do rules, deferred work/future work, drift, naming collisions/terminology distinctions, and eval/fixture/testing/process constraints.
+4. For each candidate, record the source line/message, intended memory role, whether it should be code_verified, source_verified, unknown, or dropped, and whether it was already present in existing memory.
+5. Treat explored existing repo facts as eligible memory when they were non-obvious, affected the design, or would save future navigation. Do not drop a useful fact only because the final patch did not edit that exact code path.
+6. Drop only candidates that are transient, duplicate without session clarification, unsupported, trivial to rediscover from the immediately edited file, or not useful to a future agent.
+7. Keep explicit user corrections, "do not" statements, "not built" statements, naming collisions, rejected alternatives, future-work boundaries, and eval/process constraints unless they are clearly transient.
+8. Write one focused claim per kept durable candidate. Do not merge candidates from different buckets into one broad claim.
+9. Before validating, review dropped candidates and re-add any durable explored context or session decision that would be hard to recover from code alone.
 
 Prioritize user messages and final accepted decisions over assistant suggestions. Search around terms such as `source`, `evidence`, `session`, `reason`, `metadata`, `future`, `next`, `later`, `out of scope`, `not built`, `proposal`, `eval`, `fixture`, `rubric`, `wrong`, `reject`, `don't`, and `instead`.
 
@@ -54,12 +55,16 @@ When creating a session source, derive its identity from the actual session:
 
 Before writing the proposal, scan the session against this checklist:
 
+- What existing repo behavior did the agent discover before editing?
 - What code facts changed?
 - What cross-component flows changed?
 - What constraints did the user impose?
 - What rationale explains why the code was shaped this way?
 - What trade-offs or alternatives were discussed, rejected, or deferred?
 - What drift did the implementation introduce without an explicit durable decision?
+- What terms, model concepts, or type names were easy to confuse?
+- What old memory was too broad, incomplete, or newly qualified by the session?
+- What process or eval constraints should future agents preserve?
 - What tasks remain?
 - What future work was explicitly discussed?
 
@@ -69,6 +74,7 @@ Skip a category when the session has no clear evidence for it. Do not invent fut
 
 Create memory for durable changes only:
 
+- **Explored existing facts**: non-obvious repo behavior discovered while solving the task, especially behavior that shaped the design.
 - **Code facts**: specific implementation facts verified against code or diffs.
 - **Flow facts**: how behavior works across multiple components or commands.
 - **Constraints**: rules future agents must preserve while editing.
@@ -91,11 +97,17 @@ Do not store:
 - obvious local code facts that a future agent can read immediately
 - claims based only on vague conversation unless marked `unknown`
 
+Do not treat "durable changes only" as "diff-only." A memory update should capture durable knowledge learned during the work, including pre-existing behavior that was explored and then used to make or reject a design.
+
 Do not stop at patch-visible facts. Also extract non-obvious session nuance: why the code was shaped this way, what alternatives were rejected, what future work was deferred, and what implicit drift the implementation introduced.
 
 Keep distinct durable memories distinct. "Small update" means no transcript junk or unnecessary implementation detail; it does not mean merging separate code facts, constraints, rationales, trade-offs, drift, tasks, and future work into one broad claim. If the session contains separate durable statements, create separate focused claims with the right claim kind and truth value.
 
 Preserve explicit negative or deferred decisions as first-class memory when they affect future work. Examples include "do not create code sources from code inspection", "proposal JSON remains the primitive", "a session ingest command was discussed but not built", "fixed eval fixtures should stay stable", and "compact shorthand still exists but no longer satisfies reasoned evidence validation".
+
+Preserve terminology distinctions when confusion affected the task. For example, if the session distinguishes an evidence/source model from a similarly named ranking or retrieval signal, create a separate constraint or rationale so future agents do not conflate them.
+
+When the session refines a broad existing memory, store the refined rule and supersede the old broad claim. If the old memory said "validation enforces source kinds" and the session learned "validation now allows only session sources and every evidence edge needs a reason," the refined claim should supersede the broad one.
 
 Avoid broad code-verified claims about entire skills or workflows unless every part was verified against the patch. Prefer narrower claims tied to exact code/doc changes, and keep rationale or policy from the transcript as separate source-verified claims.
 

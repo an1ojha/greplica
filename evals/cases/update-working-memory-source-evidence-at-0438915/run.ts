@@ -112,7 +112,8 @@ type BadMemoryCategory =
   | "wrong_role"
   | "wrong_evidence"
   | "duplicate_bootstrap"
-  | "transcript_noise";
+  | "transcript_noise"
+  | "over_specific";
 
 type NoiseKey =
   | "stores_raw_transcript_junk"
@@ -809,7 +810,7 @@ function judgeOutputSchema(): Record<string, unknown> {
       claim_id: { type: "string" },
       category: {
         type: "string",
-        enum: ["unsupported", "wrong_role", "wrong_evidence", "duplicate_bootstrap", "transcript_noise"],
+        enum: ["unsupported", "wrong_role", "wrong_evidence", "duplicate_bootstrap", "transcript_noise", "over_specific"],
       },
       reason: { type: "string" },
     },
