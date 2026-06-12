@@ -39,11 +39,7 @@ export async function installGreplica(options: InstallOptions): Promise<InstallR
   if (options.embedding === "local") {
     notes.push("Local embeddings were configured without prewarming; the first graph-context query may download the local model.");
   }
-  if (options.platform === "codex") {
-    notes.push("Restart Codex if the new skills do not appear immediately.");
-  } else {
-    notes.push("Restart Claude Code if the new skills do not appear immediately.");
-  }
+  notes.push(`Restart ${platformDisplayName(options.platform)} if the new skills do not appear immediately.`);
 
   return {
     platform: options.platform,
@@ -53,6 +49,12 @@ export async function installGreplica(options: InstallOptions): Promise<InstallR
     databasePath: init.database_path,
     notes,
   };
+}
+
+export function platformDisplayName(platform: InstallPlatform): string {
+  if (platform === "codex") return "Codex";
+  if (platform === "opencode") return "OpenCode";
+  return "Claude Code";
 }
 
 function installSkills(skillsRoot: string): string[] {

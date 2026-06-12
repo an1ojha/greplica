@@ -16,7 +16,7 @@ import { graphContextConfigFromGreplicaConfig } from "../../libs/knowledge-graph
 import { createEmbedder } from "../../libs/knowledge-graph/graph-context/embedder.js";
 import { compactGraphContextResult, renderGraphContextMarkdown } from "../../libs/knowledge-graph/graph-context/render.js";
 import { buildGraphFolderExport } from "../../libs/knowledge-graph/folder-export.js";
-import { installGreplica } from "../../libs/install/install.js";
+import { installGreplica, platformDisplayName } from "../../libs/install/install.js";
 import type { InstallEmbedding, InstallPlatform } from "../../libs/install/paths.js";
 import { detectRepoContext } from "./repo-context.js";
 
@@ -302,7 +302,7 @@ function requireFlagValue(args: string[], index: number, flag: string): string {
 }
 
 function parseInstallPlatform(value: string): InstallPlatform {
-  if (value === "codex" || value === "claude") return value;
+  if (value === "codex" || value === "claude" || value === "opencode") return value;
   throw new Error(`Invalid --platform ${value}.\n${installUsage()}`);
 }
 
@@ -312,7 +312,7 @@ function parseInstallEmbedding(value: string): InstallEmbedding {
 }
 
 function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>): void {
-  console.log(`Installed Greplica for ${result.platform === "codex" ? "Codex" : "Claude Code"}.`);
+  console.log(`Installed Greplica for ${platformDisplayName(result.platform)}.`);
   console.log("");
   console.log("Skills:");
   for (const skill of result.skills) console.log(`- ${skill}`);
@@ -332,12 +332,16 @@ function printInstallResult(result: Awaited<ReturnType<typeof installGreplica>>)
     console.log(`- Local embeddings are also available if you want to switch back later: greplica install --platform ${result.platform} --embedding local`);
   }
   for (const note of result.notes) console.log(`- ${note}`);
-  console.log(`- IMPORTANT: add the Greplica guidance block to ${result.platform === "codex" ? "AGENTS.md" : "CLAUDE.md"} yourself if you want the agent to keep using Greplica automatically.`);
+  console.log(`- IMPORTANT: add the Greplica guidance block to ${platformGuidanceFile(result.platform)} yourself if you want the agent to keep using Greplica automatically.`);
+}
+
+function platformGuidanceFile(platform: InstallPlatform): string {
+  return platform === "claude" ? "CLAUDE.md" : "AGENTS.md";
 }
 
 function installUsage(): string {
   const cli = basename(process.argv[1] ?? "greplica");
-  return `Usage: ${cli} install --platform codex|claude --embedding local|openai`;
+  return `Usage: ${cli} install --platform codex|claude|opencode --embedding local|openai`;
 }
 
 function printEmbeddingConfig(config: EmbeddingConfig): void {
@@ -402,7 +406,7 @@ function field(item: object, key: string): string {
 function printHelp(): void {
   const cli = basename(process.argv[1] ?? "greplica");
   console.log(`Usage:
-  ${cli} install --platform codex|claude --embedding local|openai
+  ${cli} install --platform codex|claude|opencode --embedding local|openai
   ${cli} init [--local|--openai]
   ${cli} config
   ${cli} doctor [--check-embeddings]

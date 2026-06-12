@@ -53,6 +53,11 @@ Claude Code:
 greplica install --platform claude --embedding local
 ```
 
+OpenCode:
+```bash
+greplica install --platform opencode --embedding local
+```
+
 Do not manually copy skills. Let the installer do it.
 
 After installation, tell me where the skills were installed, which embedding mode was configured, whether I should restart the agent, and how to switch later to OpenAI embeddings if I want that.
@@ -61,7 +66,7 @@ Then tell me how to use Greplica:
 - If this repo has not been initialized yet, tell me to run "Use greplica-bootstrap for this repo." once. If repo memory already exists, do not run it again.
 - Tell me that during work, the agent can use `greplica graph context "<question>"` to fetch relevant repo context, including prior working memory, before broad manual exploration.
 - Tell me that near the end of a useful session, I should run "Use greplica-update-working-memory for this session." so decisions, changed flows, constraints, and follow-up work are stored.
-- Tell me that OpenAI embeddings are also available later by rerunning `greplica install --platform <codex-or-claude> --embedding openai`.
+- Tell me that OpenAI embeddings are also available later by rerunning `greplica install --platform <codex-or-claude-or-opencode> --embedding openai`.
 - IMPORTANT: tell me to add the Greplica guidance block manually to AGENTS.md or CLAUDE.md if I want the agent to keep using Greplica automatically.
 `````
 
@@ -94,6 +99,12 @@ Claude Code:
 
 ```bash
 greplica install --platform claude --embedding local
+```
+
+OpenCode:
+
+```bash
+greplica install --platform opencode --embedding local
 ```
 
 </details>
@@ -154,14 +165,14 @@ Broader context-retrieval benchmarking, including SWE-Context benchmark work, is
 
 ## Roadmap
 
-- Codex and Claude Code plugins so Greplica can be installed and used as a first-class agent integration.
+- Codex, Claude Code, and OpenCode plugins so Greplica can be installed and used as a first-class agent integration.
 - Review UX for memory updates before the agent applies them.
 - SWE-Context benchmark coverage and sharper retrieval evals for real coding tasks.
 
 ## Commands
 
 ```bash
-greplica install --platform codex|claude --embedding local|openai
+greplica install --platform codex|claude|opencode --embedding local|openai
 greplica init [--local|--openai]
 greplica config
 greplica doctor [--check-embeddings]

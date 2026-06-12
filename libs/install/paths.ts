@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type InstallPlatform = "codex" | "claude";
+export type InstallPlatform = "codex" | "claude" | "opencode";
 export type InstallEmbedding = "local" | "openai";
 
 export const skillNames = ["greplica-bootstrap", "greplica-update-working-memory"] as const;
@@ -27,6 +27,13 @@ export function platformPaths(platform: InstallPlatform): PlatformPaths {
     const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
     return {
       skillsRoot: join(codexHome, "skills"),
+    };
+  }
+
+  if (platform === "opencode") {
+    const configHome = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+    return {
+      skillsRoot: join(configHome, "opencode", "skills"),
     };
   }
 
