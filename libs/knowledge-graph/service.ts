@@ -6,6 +6,7 @@ import type { Component, Flow, Source } from "./schema.js";
 import { GraphContextBuilder } from "./graph-context/context-builder.js";
 import { graphContextConfig, type GraphContextConfig } from "./graph-context/config.js";
 import type { EmbeddingStatus, GraphContextResult } from "./graph-context/types.js";
+import { buildGraphViewHtml } from "./graph-view/build-graph-view.js";
 import { defaultDatabasePath, openDatabase } from "../storage/sqlite/db.js";
 import type { SqliteRepository } from "../storage/sqlite/repository.js";
 import { SqliteRepository as SqliteKnowledgeGraphRepository } from "../storage/sqlite/repository.js";
@@ -83,6 +84,13 @@ export class KnowledgeGraphService {
   readGraph(input: RepoRef): GraphReadResult {
     const initialized = this.ensureInitialized(input);
     return this.repository.readGraphView(initialized.repo_id);
+  }
+
+  buildGraphView(input: RepoRef): string {
+    const initialized = this.ensureInitialized(input);
+    const graph = this.repository.readGraphView(initialized.repo_id);
+    const provenance = this.repository.readClaimProvenance(initialized.repo_id);
+    return buildGraphViewHtml(graph, provenance, { repoName: input.repo_name });
   }
 
   async contextGraph(input: RepoRef, query: string): Promise<GraphContextResult> {

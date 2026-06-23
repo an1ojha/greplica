@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { createLocalKnowledgeGraphService } from "../../libs/knowledge-graph/service.js";
 import type { KnowledgeGraphService, RepoRef } from "../../libs/knowledge-graph/service.js";
 import { envVarSource, loadRepoEnv, type LoadedRepoEnv } from "../../libs/env/load-local-env.js";
@@ -112,6 +114,28 @@ async function main(argv: string[]): Promise<void> {
     writeGraphFolderExport(outputDir, files);
     console.log(`Exported current graph view to ${outputDir}`);
     console.log(`Files: ${files.length}`);
+    return;
+  }
+
+  if (area === "graph" && action === "view") {
+    const options = parseGraphViewArgs(rest);
+    const { repo, service } = createCommandContext();
+    const graph = service.readGraph(repo);
+    if (graph.components.length === 0) {
+      console.log("No components to visualise. Bootstrap memory first.");
+      process.exitCode = 1;
+      return;
+    }
+
+    const outputPath = options.outputPath ?? defaultGraphViewOutputPath(repo.repo_name);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    const html = service.buildGraphView(repo);
+    writeFileSync(outputPath, html, "utf8");
+    console.log(`Wrote graph view to ${outputPath}`);
+
+    if (!options.noOpen) {
+      openInBrowser(outputPath);
+    }
     return;
   }
 
@@ -295,9 +319,9 @@ function parseInstallArgs(args: string[]): { platform: InstallPlatform; embeddin
   return { platform, embedding };
 }
 
-function requireFlagValue(args: string[], index: number, flag: string): string {
+function requireFlagValue(args: string[], index: number, flag: string, usage = installUsage()): string {
   const value = args[index + 1];
-  if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for ${flag}.\n${installUsage()}`);
+  if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for ${flag}.\n${usage}`);
   return value;
 }
 
@@ -373,6 +397,69 @@ function parseGraphContextOutput(args: string[]): "markdown" | "json" | "debug" 
   return "markdown";
 }
 
+interface GraphViewOptions {
+  outputPath?: string;
+  noOpen: boolean;
+}
+
+function parseGraphViewArgs(args: string[]): GraphViewOptions {
+  let outputPath: string | undefined;
+  let noOpen = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--no-open") {
+      noOpen = true;
+      continue;
+    }
+    if (arg === "--out") {
+      outputPath = resolve(requireFlagValue(args, index, "--out", graphViewUsage()));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--out=")) {
+      outputPath = resolve(arg.slice("--out=".length));
+      continue;
+    }
+    throw new Error(graphViewUsage());
+  }
+
+  return { outputPath, noOpen };
+}
+
+function graphViewUsage(): string {
+  const cli = basename(process.argv[1] ?? "greplica");
+  return `Usage: ${cli} graph view [--out <file>] [--no-open]`;
+}
+
+function defaultGraphViewOutputPath(repoName: string): string {
+  const safeName = repoName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
+  return join(tmpdir(), `greplica-graph-${safeName}.html`);
+}
+
+function openInBrowser(filePath: string): void {
+  const platform = process.platform;
+  let command: string;
+  let args: string[];
+
+  if (platform === "darwin") {
+    command = "open";
+    args = [filePath];
+  } else if (platform === "win32") {
+    command = "cmd";
+    args = ["/c", "start", "", filePath];
+  } else {
+    command = "xdg-open";
+    args = [filePath];
+  }
+
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.unref();
+  child.on("error", () => {
+    console.log(`Open ${filePath} in your browser to view the graph.`);
+  });
+}
+
 function writeGraphFolderExport(outputDir: string, files: Array<{ path: string; content: string }>): void {
   mkdirSync(outputDir, { recursive: true });
   for (const file of files) {
@@ -413,6 +500,7 @@ function printHelp(): void {
   ${cli} graph read
   ${cli} graph context <query> [--json|--debug]
   ${cli} graph export <dir>
+  ${cli} graph view [--out <file>] [--no-open]
   ${cli} proposal validate <file>
   ${cli} proposal apply <file>`);
 }

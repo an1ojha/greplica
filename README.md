@@ -180,9 +180,12 @@ greplica doctor [--check-embeddings]
 greplica graph read
 greplica graph context "<query>" [--json|--debug]
 greplica graph export <dir>
+greplica graph view [--out <file>] [--no-open]
 greplica proposal validate <proposal.json>
 greplica proposal apply <proposal.json>
 ```
+
+`greplica graph view` writes a self-contained HTML visualisation of the current graph (components, claims, claim kinds, and claims timeline) and opens it in your default browser. Use `--out` to choose where the file is written; by default it goes to a temp path. Use `--no-open` to skip opening the browser.
 
 `greplica graph context "<query>"` prints concise Markdown for coding-agent use. Use `--json` for compact structured output, or `--debug` for the full retrieval payload with ranking signals and embedding status.
 
