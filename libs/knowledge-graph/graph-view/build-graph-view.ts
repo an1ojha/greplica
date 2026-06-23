@@ -1,6 +1,7 @@
+import type { Claim } from "../claim.js";
 import type { Edge } from "../edge.js";
 import type { GraphReadResult } from "../service.js";
-import type { Component, Source } from "../schema.js";
+import type { Component, Flow, Source } from "../schema.js";
 import type { ClaimProvenanceRecord } from "../../storage/sqlite/repository.js";
 
 export interface GraphViewComponentRow {
@@ -10,6 +11,15 @@ export interface GraphViewComponentRow {
   anchors: string[];
   flowCount: number;
   claimCount: number;
+  subcomponentCount: number;
+}
+
+export interface GraphViewFlowRow {
+  id: string;
+  name: string;
+  folder: string;
+  touchedComponentFolders: string[];
+  claimCount: number;
 }
 
 export interface GraphViewClaimRow {
@@ -17,6 +27,10 @@ export interface GraphViewClaimRow {
   text: string;
   kind: string;
   session: string;
+  source: "code" | "session";
+  freshness: "active" | "superseded";
+  componentIds: string[];
+  flowIds: string[];
   createdAt: string | null;
   memoryCommitId: string | null;
 }
@@ -35,9 +49,12 @@ export interface GraphViewData {
     components: number;
     flows: number;
     claims: number;
+    superseded: number;
   };
   components: GraphViewComponentRow[];
+  flows: GraphViewFlowRow[];
   claims: GraphViewClaimRow[];
+  supersededClaims: GraphViewClaimRow[];
   claimsTimeline: {
     summary: { total: number; sessionPct: number; codePct: number };
     events: GraphViewTimelineEvent[];
@@ -48,9 +65,21 @@ export interface BuildGraphViewOptions {
   repoName?: string;
 }
 
+const CLAIM_KIND_ORDER = ["fact", "decision", "requirement", "task", "risk", "question"];
+
+const CLAIM_KIND_COLORS: Record<string, string> = {
+  fact: "#4e79a7",
+  decision: "#59a14f",
+  requirement: "#f28e2b",
+  task: "#b07aa1",
+  risk: "#e15759",
+  question: "#76b7b2",
+};
+
 export function buildGraphViewData(
   graph: GraphReadResult,
   provenance: ClaimProvenanceRecord[],
+  supersededClaims: Claim[],
 ): GraphViewData {
   const provenanceByClaimId = new Map(provenance.map((row) => [row.claim_id, row]));
   const sourceById = new Map(graph.sources.map((source) => [source.id, source]));
@@ -62,35 +91,61 @@ export function buildGraphViewData(
     anchors: parseAnchors(component.code_anchor),
     flowCount: countFlowsForComponent(component.id, graph.edges),
     claimCount: countClaimsForComponent(component.id, graph.edges),
+    subcomponentCount: countSubcomponents(component.id, graph.edges),
   }));
 
-  const claims = graph.claims
-    .map((claim) => {
-      const record = provenanceByClaimId.get(claim.id);
-      return {
-        id: claim.id,
-        text: claim.text,
-        kind: claim.kind,
-        session: sessionLabelForClaim(claim.id, graph.edges, sourceById),
-        createdAt: record?.created_at ?? null,
-        memoryCommitId: record?.memory_commit_id ?? null,
-      };
-    })
-    .sort((left, right) => {
-      const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0;
-      const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0;
-      return rightTime - leftTime;
-    });
+  const topLevelFlows = selectTopLevelFlows(graph.flows, graph.edges);
+  const flows = topLevelFlows.map((flow) => {
+    const touchedComponentIds = touchedComponentIdsForFlow(flow.id, graph.edges);
+    return {
+      id: flow.id,
+      name: flow.name,
+      folder: segmentForFlowId(flow.id),
+      touchedComponentFolders: touchedComponentIds
+        .map((componentId) => segmentForComponentId(componentId))
+        .sort((left, right) => left.localeCompare(right)),
+      claimCount: countClaimsForFlow(flow.id, graph.edges),
+    };
+  });
+
+  const toClaimRow = (claim: Claim, freshness: "active" | "superseded"): GraphViewClaimRow => {
+    const record = provenanceByClaimId.get(claim.id);
+    const session = sessionLabelForClaim(claim.id, graph.edges, sourceById);
+    return {
+      id: claim.id,
+      text: claim.text,
+      kind: claim.kind,
+      session,
+      source: isFromSession(session) ? "session" : "code",
+      freshness,
+      componentIds: componentIdsForClaim(claim.id, graph.edges),
+      flowIds: flowIdsForClaim(claim.id, graph.edges),
+      createdAt: record?.created_at ?? null,
+      memoryCommitId: record?.memory_commit_id ?? null,
+    };
+  };
+
+  const byCreatedDesc = (left: GraphViewClaimRow, right: GraphViewClaimRow): number => {
+    const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0;
+    const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0;
+    return rightTime - leftTime;
+  };
+
+  const claims = graph.claims.map((claim) => toClaimRow(claim, "active")).sort(byCreatedDesc);
+  const superseded = supersededClaims.map((claim) => toClaimRow(claim, "superseded")).sort(byCreatedDesc);
 
   return {
     generatedAt: new Date().toISOString(),
     counts: {
       components: components.length,
-      flows: graph.flows.length,
+      flows: flows.length,
       claims: claims.length,
+      superseded: superseded.length,
     },
     components,
+    flows,
     claims,
+    supersededClaims: superseded,
     claimsTimeline: buildClaimsTimeline(claims),
   };
 }
@@ -98,9 +153,10 @@ export function buildGraphViewData(
 export function buildGraphViewHtml(
   graph: GraphReadResult,
   provenance: ClaimProvenanceRecord[],
+  supersededClaims: Claim[],
   options: BuildGraphViewOptions = {},
 ): string {
-  const data = buildGraphViewData(graph, provenance);
+  const data = buildGraphViewData(graph, provenance, supersededClaims);
   const title = options.repoName ? `Greplica graph view — ${options.repoName}` : "Greplica graph view";
   return renderHtml(data, title);
 }
@@ -116,6 +172,17 @@ function selectTopLevelComponents(components: Component[], edges: Edge[]): Compo
   return sortByName(components.filter((component) => !childIds.has(component.id)));
 }
 
+function selectTopLevelFlows(flows: Flow[], edges: Edge[]): Flow[] {
+  const flowIds = new Set(flows.map((flow) => flow.id));
+  const childIds = new Set<string>();
+  for (const edge of edges) {
+    if (edge.kind !== "contains" || edge.from_type !== "flow" || edge.to_type !== "flow") continue;
+    if (!flowIds.has(edge.from_id) || !flowIds.has(edge.to_id)) continue;
+    childIds.add(edge.to_id);
+  }
+  return sortByName(flows.filter((flow) => !childIds.has(flow.id)));
+}
+
 function countFlowsForComponent(componentId: string, edges: Edge[]): number {
   return edges.filter((edge) => edge.kind === "touches" && edge.to_type === "component" && edge.to_id === componentId).length;
 }
@@ -124,12 +191,54 @@ function countClaimsForComponent(componentId: string, edges: Edge[]): number {
   return edges.filter((edge) => edge.kind === "about" && edge.to_type === "component" && edge.to_id === componentId).length;
 }
 
+function countSubcomponents(componentId: string, edges: Edge[]): number {
+  return edges.filter(
+    (edge) =>
+      edge.kind === "contains" &&
+      edge.from_type === "component" &&
+      edge.to_type === "component" &&
+      edge.from_id === componentId,
+  ).length;
+}
+
+function countClaimsForFlow(flowId: string, edges: Edge[]): number {
+  return edges.filter((edge) => edge.kind === "about" && edge.to_type === "flow" && edge.to_id === flowId).length;
+}
+
+function touchedComponentIdsForFlow(flowId: string, edges: Edge[]): string[] {
+  return edges
+    .filter((edge) => edge.kind === "touches" && edge.from_type === "flow" && edge.from_id === flowId && edge.to_type === "component")
+    .map((edge) => edge.to_id)
+    .sort();
+}
+
+function flowIdsForClaim(claimId: string, edges: Edge[]): string[] {
+  return edges
+    .filter((edge) => edge.kind === "about" && edge.from_type === "claim" && edge.from_id === claimId && edge.to_type === "flow")
+    .map((edge) => edge.to_id);
+}
+
+function componentIdsForClaim(claimId: string, edges: Edge[]): string[] {
+  return edges
+    .filter((edge) => edge.kind === "about" && edge.from_type === "claim" && edge.from_id === claimId && edge.to_type === "component")
+    .map((edge) => edge.to_id);
+}
+
 function parseAnchors(codeAnchor: string | undefined): string[] {
   if (codeAnchor === undefined || codeAnchor.trim().length === 0) return [];
   return codeAnchor
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+}
+
+function segmentForFlowId(id: string): string {
+  const withoutPrefix = id.startsWith("flow.") ? id.slice("flow.".length) : id;
+  const slugged = withoutPrefix
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return slugged.length > 0 ? slugged : `flow-${id.slice(0, 8)}`;
 }
 
 function segmentForComponentId(id: string): string {
@@ -239,6 +348,15 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function kindColor(kind: string): string {
+  return CLAIM_KIND_COLORS[kind] ?? "#cdd2da";
+}
+
+function renderClaimRow(claim: GraphViewClaimRow): string {
+  const badge = `<span class="kind-badge" style="background:${kindColor(claim.kind)}">${escapeHtml(claim.kind)}</span>`;
+  return `          <tr data-id="${escapeHtml(claim.id)}" data-kind="${escapeHtml(claim.kind)}" data-source="${escapeHtml(claim.source)}" data-freshness="${escapeHtml(claim.freshness)}" data-memory-commit-id="${escapeHtml(claim.memoryCommitId ?? "")}"><td class="claim-text">${escapeHtml(claim.text)}<div class="claim-id"><code>${escapeHtml(claim.id)}</code></div></td><td class="session">${escapeHtml(claim.session)}</td><td class="kind-cell">${badge}</td><td class="created">${escapeHtml(formatDateTime(claim.createdAt))}</td></tr>`;
+}
+
 function renderHtml(data: GraphViewData, title: string): string {
   const componentRows = data.components
     .map((component) => {
@@ -246,29 +364,41 @@ function renderHtml(data: GraphViewData, title: string): string {
         component.anchors.length > 0
           ? component.anchors.map((anchor) => `<code>${escapeHtml(anchor)}</code>`).join("<br>")
           : '<span class="muted">—</span>';
-      return `          <tr data-id="${escapeHtml(component.id)}"><td class="folder">${escapeHtml(component.folder)}</td><td>${escapeHtml(component.name)}</td><td class="anchors">${anchors}</td><td class="count">${component.flowCount}</td><td class="count">${component.claimCount}</td></tr>`;
+      const claimsCell =
+        component.claimCount > 0
+          ? `<a class="component-claims-link" href="#claims?component=${encodeURIComponent(component.id)}">${component.claimCount}</a>`
+          : `${component.claimCount}`;
+      return `          <tr data-id="${escapeHtml(component.id)}"><td>${escapeHtml(component.folder)}</td><td class="component-description">${escapeHtml(component.name)}</td><td class="anchors">${anchors}</td><td class="count">${component.flowCount}</td><td class="count">${claimsCell}</td><td class="count">${component.subcomponentCount}</td></tr>`;
     })
     .join("\n");
 
-  const claimRows = data.claims
-    .map(
-      (claim) =>
-        `          <tr data-id="${escapeHtml(claim.id)}" data-memory-commit-id="${escapeHtml(claim.memoryCommitId ?? "")}"><td class="claim-text">${escapeHtml(claim.text)}<div class="claim-id"><code>${escapeHtml(claim.id)}</code></div></td><td class="session">${escapeHtml(claim.session)}</td><td class="created">${escapeHtml(formatDateTime(claim.createdAt))}</td></tr>`,
-    )
+  const flowRows = data.flows
+    .map((flow) => {
+      const touchedComponents =
+        flow.touchedComponentFolders.length > 0
+          ? flow.touchedComponentFolders.map((folder) => `<code>${escapeHtml(folder)}</code>`).join("<br>")
+          : '<span class="muted">—</span>';
+      const claimsCell =
+        flow.claimCount > 0
+          ? `<a class="flow-claims-link" href="#claims?flow=${encodeURIComponent(flow.id)}">${flow.claimCount}</a>`
+          : `${flow.claimCount}`;
+      return `          <tr data-id="${escapeHtml(flow.id)}"><td>${escapeHtml(flow.folder)}</td><td class="flow-description">${escapeHtml(flow.name)}</td><td class="anchors">${touchedComponents}</td><td class="count">${claimsCell}</td></tr>`;
+    })
     .join("\n");
+
+  const claimRows = [...data.claims, ...data.supersededClaims].map(renderClaimRow).join("\n");
 
   const timeline = data.claimsTimeline;
   const timelineEvents = timeline.events
     .map((event) => {
-      const commitHref = event.memoryCommitId ? `#claims?commit=${encodeURIComponent(event.memoryCommitId)}` : "#claims";
-      return `          <li class="timeline-event">
-            <div class="timeline-marker" aria-hidden="true"></div>
-            <a class="timeline-link" href="${commitHref}">
-              <div class="timeline-body">
-                <div class="timeline-date">${escapeHtml(formatDateTime(event.createdAt))}</div>
-                <div class="timeline-stat">${event.added} claim${event.added === 1 ? "" : "s"} added (${event.sessionPct}% from session, ${event.codePct}% from code)</div>
-              </div>
-            </a>
+      const inner = `<div class="tl-date">${escapeHtml(formatDateTime(event.createdAt))}</div>
+              <div class="tl-stat">${event.added} claim${event.added === 1 ? "" : "s"} added · ${event.sessionPct}% session / ${event.codePct}% code</div>`;
+      const body = event.memoryCommitId
+        ? `<a class="tl-link" href="#claims?commit=${encodeURIComponent(event.memoryCommitId)}"><div class="tl-content">${inner}</div></a>`
+        : `<div class="tl-content tl-content-static">${inner}</div>`;
+      return `          <li class="tl-item">
+            <span class="tl-dot" aria-hidden="true"></span>
+            ${body}
           </li>`;
     })
     .join("\n");
@@ -332,6 +462,17 @@ function renderHtml(data: GraphViewData, title: string): string {
       color: var(--accent);
       font-weight: 600;
     }
+    nav a.nav-nested {
+      padding-left: 1.65rem;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    nav a.nav-nested:hover {
+      color: var(--text);
+    }
+    nav a.nav-nested.active {
+      color: var(--accent);
+    }
     main { padding: 2rem; }
     .view { display: none; }
     .view.active { display: block; }
@@ -354,6 +495,7 @@ function renderHtml(data: GraphViewData, title: string): string {
       overflow: hidden;
     }
     table.claims-table { max-width: 1400px; }
+    table.flows-table { max-width: 1200px; }
     th, td {
       text-align: left;
       padding: 0.85rem 1rem;
@@ -368,11 +510,20 @@ function renderHtml(data: GraphViewData, title: string): string {
     }
     tr:last-child td { border-bottom: none; }
     tbody tr:hover { background: #fafbfc; }
-    td.folder {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.88rem;
-      color: var(--muted);
+    td.component-description { min-width: 220px; }
+    td.flow-description { min-width: 220px; }
+    table.flows-table td.flow-description {
+      min-width: 280px;
+      max-width: 460px;
+      width: 38%;
+    }
+    table.flows-table td.anchors {
+      min-width: 180px;
+      width: 24%;
+    }
+    table.flows-table td.anchors code {
       white-space: nowrap;
+      word-break: normal;
     }
     td.anchors {
       font-size: 0.82rem;
@@ -388,9 +539,27 @@ function renderHtml(data: GraphViewData, title: string): string {
       text-align: center;
       font-variant-numeric: tabular-nums;
       color: var(--muted);
-      width: 4.5rem;
+      width: 6rem;
     }
-    th.count { text-align: center; width: 4.5rem; }
+    th.count { text-align: center; width: 6rem; }
+    a.component-claims-link {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      transition: color 0.15s;
+    }
+    a.component-claims-link:hover {
+      color: var(--accent);
+    }
+    a.flow-claims-link {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      transition: color 0.15s;
+    }
+    a.flow-claims-link:hover {
+      color: var(--accent);
+    }
     td.claim-text { min-width: 320px; }
     td.claim-text .claim-id {
       margin-top: 0.35rem;
@@ -401,6 +570,16 @@ function renderHtml(data: GraphViewData, title: string): string {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     td.session { min-width: 180px; font-size: 0.9rem; }
+    td.kind-cell { white-space: nowrap; }
+    .kind-badge {
+      display: inline-block;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #fff;
+      text-transform: capitalize;
+    }
     td.created {
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
@@ -408,96 +587,26 @@ function renderHtml(data: GraphViewData, title: string): string {
       color: var(--muted);
     }
     .muted { color: var(--muted); }
-    .timeline {
-      max-width: 720px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
+    .claims-search-wrap {
+      max-width: 1400px;
+      margin-top: 1.1rem;
+      margin-bottom: 1rem;
     }
-    .timeline-summary {
-      display: grid;
-      grid-template-columns: 1.25rem 1fr;
-      gap: 1rem;
-      align-items: start;
-      margin-bottom: 0.5rem;
-    }
-    .timeline-summary-marker {
-      width: 1.25rem;
-      height: 1.25rem;
-      margin-top: 0.2rem;
-      border-radius: 50%;
-      background: var(--accent);
-      border: 3px solid var(--panel);
-      box-shadow: 0 0 0 2px var(--accent);
-    }
-    .timeline-summary-body {
-      background: var(--panel);
+    .claims-search {
+      width: 100%;
+      max-width: 420px;
+      padding: 0.6rem 0.85rem;
+      font-size: 0.95rem;
+      font-family: inherit;
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 1rem 1.1rem;
-    }
-    .timeline-summary-label {
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--muted);
-      margin-bottom: 0.25rem;
-    }
-    .timeline-summary-stat {
-      font-size: 1.05rem;
-      font-weight: 600;
-    }
-    .timeline-events {
-      margin: 0;
-      padding: 0 0 0 0.45rem;
-      list-style: none;
-      border-left: 2px solid var(--line);
-    }
-    .timeline-event {
-      display: grid;
-      grid-template-columns: 1.25rem 1fr;
-      gap: 1rem;
-      align-items: start;
-      padding-bottom: 1.35rem;
-      position: relative;
-      margin-left: -0.55rem;
-    }
-    .timeline-event:last-child { padding-bottom: 0; }
-    .timeline-marker {
-      width: 0.85rem;
-      height: 0.85rem;
-      margin-top: 0.35rem;
-      margin-left: 0.2rem;
-      border-radius: 50%;
+      border-radius: 8px;
       background: var(--panel);
-      border: 2px solid var(--accent);
-      box-shadow: 0 0 0 2px var(--bg);
+      color: var(--text);
     }
-    .timeline-body {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 0.8rem 1rem;
-    }
-    a.timeline-link {
-      color: inherit;
-      text-decoration: none;
-      display: block;
-    }
-    a.timeline-link:hover .timeline-body,
-    a.timeline-link:focus-visible .timeline-body {
+    .claims-search:focus {
+      outline: none;
       border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-soft);
-    }
-    a.timeline-summary-link {
-      color: inherit;
-      text-decoration: none;
-      display: block;
-    }
-    a.timeline-summary-link:hover .timeline-summary-body,
-    a.timeline-summary-link:focus-visible .timeline-summary-body {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-soft);
+      box-shadow: 0 0 0 3px var(--accent-soft);
     }
     .claims-meta .filter-clear {
       margin-left: 0.5rem;
@@ -507,74 +616,153 @@ function renderHtml(data: GraphViewData, title: string): string {
     }
     .claims-meta .filter-clear:hover { text-decoration: underline; }
     tr.claim-row-hidden { display: none; }
-    tr.claim-row-highlight td { background: var(--accent-soft) !important; }
-    .timeline-date {
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-bottom: 0.2rem;
-    }
-    .timeline-stat {
-      font-size: 0.95rem;
-    }
-    .claim-kinds-layout {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 2.5rem;
-      align-items: flex-start;
-      max-width: 900px;
-    }
-    .claim-kinds-chart-wrap {
-      flex: 0 0 auto;
-    }
-    .claim-kinds-chart {
-      display: block;
-    }
-    .claim-kinds-chart .pie-slice {
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-    .claim-kinds-chart a:hover .pie-slice,
-    .claim-kinds-chart a:focus-visible .pie-slice {
-      opacity: 0.85;
-    }
-    .claim-kinds-legend {
-      flex: 1 1 220px;
+    /* Timeline */
+    .timeline {
+      list-style: none;
       margin: 0;
       padding: 0;
-      list-style: none;
+      position: relative;
+      max-width: 640px;
     }
-    .claim-kinds-legend li { margin-bottom: 0.65rem; }
-    .claim-kinds-legend a {
-      display: flex;
-      align-items: center;
-      gap: 0.65rem;
-      color: var(--text);
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background: var(--line);
+    }
+    .tl-item {
+      position: relative;
+      padding: 0 0 2.25rem 2rem;
+    }
+    .tl-item:last-child { padding-bottom: 0; }
+    .tl-dot {
+      position: absolute;
+      left: 0;
+      top: 1rem;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--panel);
+      border: 3px solid var(--accent);
+      z-index: 1;
+    }
+    .tl-link {
+      display: block;
+      color: inherit;
       text-decoration: none;
-      font-size: 0.95rem;
-      padding: 0.35rem 0.5rem;
-      border-radius: 8px;
     }
-    .claim-kinds-legend a:hover {
-      background: var(--accent-soft);
-      color: var(--accent);
+    .tl-content {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.9rem 1.1rem;
     }
-    .claim-kinds-swatch {
-      width: 0.85rem;
-      height: 0.85rem;
-      border-radius: 3px;
+    .tl-link:hover .tl-content,
+    .tl-link:focus-visible .tl-content {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .tl-content-static {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.9rem 1.1rem;
+    }
+    .tl-date {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.1rem;
+    }
+    .tl-stat { font-size: 0.95rem; }
+    /* Overview dashboard */
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2rem;
+      width: 100%;
+      max-width: 1280px;
+      align-items: stretch;
+    }
+    .overview-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+    }
+    .overview-card h3 {
+      margin: 0 0 1rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      align-self: flex-start;
+      width: 100%;
+    }
+    .overview-chart-wrap {
+      position: relative;
+      width: 260px;
+      height: 260px;
       flex-shrink: 0;
     }
-    .claim-kinds-legend .kind-label {
-      font-weight: 600;
-      min-width: 5.5rem;
+    .overview-chart-wrap canvas {
+      display: block;
+      width: 260px !important;
+      height: 260px !important;
     }
-    .claim-kinds-legend .kind-stat {
+    .overview-legend {
+      list-style: none;
+      margin: 1.5rem 0 0;
+      padding: 0;
+      width: 100%;
+      max-width: 360px;
+      min-height: 4.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      column-gap: 0.75rem;
+      row-gap: 0.45rem;
+      align-content: flex-start;
+    }
+    .overview-legend li {
+      margin: 0;
+      min-width: 0;
+      flex: 0 0 calc(33.333% - 0.5rem);
+      max-width: calc(33.333% - 0.5rem);
+      display: flex;
+      justify-content: center;
+    }
+    .overview-legend a {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: #5c6370;
+      text-decoration: none;
+      font-size: 15px;
+      padding: 0.1rem 0.15rem;
+      border-radius: 6px;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .overview-legend a:hover { background: var(--bg); }
+    .overview-legend .legend-swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .overview-legend .legend-count {
       color: var(--muted);
       font-variant-numeric: tabular-nums;
     }
     @media (max-width: 720px) {
       .layout { grid-template-columns: 1fr; }
       nav { border-right: none; border-bottom: 1px solid var(--line); }
+      .overview-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -583,181 +771,115 @@ function renderHtml(data: GraphViewData, title: string): string {
     <nav>
       <h1>Views</h1>
       <a href="#components" data-view="components">Components</a>
+      <a href="#flows" data-view="flows">Flows</a>
       <a href="#claims" data-view="claims">Claims</a>
-      <a href="#claim-kinds" data-view="claim-kinds">Claim Kinds</a>
-      <a href="#claims-timeline" data-view="claims-timeline">Claims - Timeline</a>
+      <a href="#claims-timeline" data-view="claims-timeline" class="nav-nested">Claims - Timeline</a>
+      <a href="#claims-overview" data-view="claims-overview" class="nav-nested">Claims - Overview</a>
     </nav>
     <main>
       <section id="view-components" class="view" data-view="components">
         <h2>Components</h2>
-        <p class="meta">${data.components.length} top-level components</p>
+        <p class="meta">${data.components.length} top-level components · click to see claims</p>
         <table>
           <thead>
-            <tr><th>Folder</th><th>Name</th><th>Anchors</th><th class="count">Flows</th><th class="count">Claims</th></tr>
+            <tr><th>Name</th><th>Description</th><th>Code Anchors</th><th class="count">Flows</th><th class="count">Claims</th><th class="count">Subcomponents</th></tr>
           </thead>
           <tbody>
 ${componentRows}
           </tbody>
         </table>
       </section>
+      <section id="view-flows" class="view" data-view="flows">
+        <h2>Flows</h2>
+        <p class="meta">${data.flows.length} top-level flows · click to see claims</p>
+        <table class="flows-table">
+          <thead>
+            <tr><th>Name</th><th>Description</th><th>Touched Components</th><th class="count">Claims</th></tr>
+          </thead>
+          <tbody>
+${flowRows}
+          </tbody>
+        </table>
+      </section>
       <section id="view-claims" class="view" data-view="claims">
         <h2>Claims</h2>
+        <div class="claims-search-wrap">
+          <input type="search" id="claims-search" class="claims-search" placeholder="Search by keyword" autocomplete="off" spellcheck="false">
+        </div>
         <p class="meta claims-meta" id="claims-meta">${escapeHtml(defaultClaimsMeta)}</p>
         <table class="claims-table" id="claims-table">
           <thead>
-            <tr><th>Claim</th><th>Session</th><th>Created</th></tr>
+            <tr><th>Claim</th><th>Session</th><th>Type</th><th>Created</th></tr>
           </thead>
           <tbody>
 ${claimRows}
           </tbody>
         </table>
       </section>
-      <section id="view-claim-kinds" class="view" data-view="claim-kinds">
-        <h2>Claim Kinds</h2>
-        <p class="meta" id="claim-kinds-meta">Active claims by kind · click a slice to filter Claims</p>
-        <div class="claim-kinds-layout">
-          <div class="claim-kinds-chart-wrap">
-            <svg id="claim-kinds-chart" class="claim-kinds-chart" width="320" height="320" viewBox="0 0 320 320" role="img" aria-label="Pie chart of claim kinds"></svg>
-          </div>
-          <ul class="claim-kinds-legend" id="claim-kinds-legend"></ul>
-        </div>
-      </section>
       <section id="view-claims-timeline" class="view" data-view="claims-timeline">
         <h2>Claims - Timeline</h2>
-        <p class="meta">${timeline.events.length} memory commits · newest batches first</p>
-        <div class="timeline">
-          <div class="timeline-summary">
-            <div class="timeline-summary-marker" aria-hidden="true"></div>
-            <a class="timeline-summary-link" href="#claims">
-              <div class="timeline-summary-body">
-                <div class="timeline-summary-label">Cumulative to date</div>
-                <div class="timeline-summary-stat">${timeline.summary.total} claims (${timeline.summary.sessionPct}% from session, ${timeline.summary.codePct}% from code)</div>
-              </div>
-            </a>
-          </div>
-          <ol class="timeline-events">
+        <p class="meta">${data.counts.claims} Claims · ${timeline.events.length} memory commits · newest first · click to see claims</p>
+        <ol class="timeline">
 ${timelineEvents}
-          </ol>
+        </ol>
+      </section>
+      <section id="view-claims-overview" class="view" data-view="claims-overview">
+        <h2>Claims - Overview</h2>
+        <p class="meta">Summary of ${data.counts.claims} active claims · click to see claims</p>
+        <div class="overview-grid">
+          <div class="overview-card">
+            <h3>By Type</h3>
+            <div class="overview-chart-wrap">
+              <canvas id="chart-type" role="img" aria-label="Claims by type"></canvas>
+            </div>
+            <ul class="overview-legend" id="legend-type"></ul>
+          </div>
+          <div class="overview-card">
+            <h3>By Source</h3>
+            <div class="overview-chart-wrap">
+              <canvas id="chart-source" role="img" aria-label="Claims by source"></canvas>
+            </div>
+            <ul class="overview-legend" id="legend-source"></ul>
+          </div>
+          <div class="overview-card">
+            <h3>By Freshness</h3>
+            <div class="overview-chart-wrap">
+              <canvas id="chart-freshness" role="img" aria-label="Claims by freshness"></canvas>
+            </div>
+            <ul class="overview-legend" id="legend-freshness"></ul>
+          </div>
         </div>
       </section>
     </main>
   </div>
   <script id="graph-data" type="application/json">${graphDataJson}</script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script>
+    if (window.Chart && window.ChartDataLabels) {
+      Chart.register(ChartDataLabels);
+    }
     const graphData = JSON.parse(document.getElementById("graph-data").textContent);
     const links = document.querySelectorAll("nav a[data-view]");
     const views = document.querySelectorAll(".view[data-view]");
-    const claimRows = document.querySelectorAll("#claims-table tbody tr[data-memory-commit-id]");
+    const claimRows = document.querySelectorAll("#claims-table tbody tr[data-id]");
     const claimsMeta = document.getElementById("claims-meta");
-    const claimsView = document.getElementById("view-claims");
+    const claimsSearchInput = document.getElementById("claims-search");
     const defaultClaimsMeta = ${JSON.stringify(defaultClaimsMeta)};
 
-    const claimKindById = new Map(graphData.claims.map((claim) => [claim.id, claim.kind]));
-    for (const row of claimRows) {
-      row.dataset.kind = claimKindById.get(row.dataset.id) ?? "";
-    }
+    const CLAIM_KIND_ORDER = ${JSON.stringify(CLAIM_KIND_ORDER)};
+    const CLAIM_KIND_COLORS = ${JSON.stringify(CLAIM_KIND_COLORS)};
+    const SOURCE_COLORS = { code: "#4e79a7", session: "#f28e2b" };
+    const FRESHNESS_COLORS = { active: "#59a14f", superseded: "#bab0ac" };
 
-    const CLAIM_KIND_ORDER = ["fact", "decision", "requirement", "task", "risk", "question"];
-    const CLAIM_KIND_COLORS = {
-      fact: "#2f6fed",
-      decision: "#0f8a5f",
-      requirement: "#c99700",
-      task: "#8b5cf6",
-      risk: "#e4572e",
-      question: "#ec4899",
-    };
+    const allClaims = graphData.claims.concat(graphData.supersededClaims);
+    const claimTextById = new Map(allClaims.map((claim) => [claim.id, claim.text]));
+    const componentIdsByClaim = new Map(graphData.claims.map((claim) => [claim.id, claim.componentIds || []]));
+    const flowIdsByClaim = new Map(graphData.claims.map((claim) => [claim.id, claim.flowIds || []]));
+    const componentNameById = new Map(graphData.components.map((component) => [component.id, component.name]));
+    const flowNameById = new Map(graphData.flows.map((flow) => [flow.id, flow.name]));
 
-    function aggregateClaimKindCounts() {
-      const counts = Object.fromEntries(CLAIM_KIND_ORDER.map((kind) => [kind, 0]));
-      for (const claim of graphData.claims) {
-        if (counts[claim.kind] !== undefined) counts[claim.kind] += 1;
-        else counts[claim.kind] = 1;
-      }
-      return counts;
-    }
-
-    function pieSlicePath(cx, cy, r, startAngle, endAngle) {
-      const x1 = cx + r * Math.cos(startAngle);
-      const y1 = cy + r * Math.sin(startAngle);
-      const x2 = cx + r * Math.cos(endAngle);
-      const y2 = cy + r * Math.sin(endAngle);
-      const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
-      return "M " + cx + " " + cy + " L " + x1 + " " + y1 + " A " + r + " " + r + " 0 " + largeArc + " 1 " + x2 + " " + y2 + " Z";
-    }
-
-    function renderClaimKindsChart() {
-      const svg = document.getElementById("claim-kinds-chart");
-      const legend = document.getElementById("claim-kinds-legend");
-      const meta = document.getElementById("claim-kinds-meta");
-      if (!svg || !legend) return;
-
-      const counts = aggregateClaimKindCounts();
-      const total = graphData.claims.length;
-      const slices = CLAIM_KIND_ORDER.filter((kind) => counts[kind] > 0);
-      const cx = 160;
-      const cy = 160;
-      const r = 130;
-      let angle = -Math.PI / 2;
-
-      const svgParts = [];
-      for (const kind of slices) {
-        const count = counts[kind];
-        const sliceAngle = (count / total) * Math.PI * 2;
-        const endAngle = angle + sliceAngle;
-        const path = pieSlicePath(cx, cy, r, angle, endAngle);
-        const pct = Math.round((count / total) * 100);
-        const href = "#claims?kind=" + encodeURIComponent(kind);
-        const mid = angle + sliceAngle / 2;
-        const labelR = r * 0.62;
-        const lx = cx + labelR * Math.cos(mid);
-        const ly = cy + labelR * Math.sin(mid);
-        const showLabel = sliceAngle > 0.25;
-        svgParts.push(
-          '<a href="' + href + '" class="pie-slice-link">' +
-            '<path class="pie-slice" d="' + path + '" fill="' + CLAIM_KIND_COLORS[kind] + '" data-kind="' + kind + '">' +
-              '<title>' + kind + ": " + count + " (" + pct + "%)</title>" +
-            "</path>" +
-          "</a>"
-        );
-        if (showLabel) {
-          svgParts.push(
-            '<text x="' + lx + '" y="' + ly + '" text-anchor="middle" dominant-baseline="middle" ' +
-              'font-size="11" font-weight="600" fill="#fff" pointer-events="none">' + pct + "%</text>"
-          );
-        }
-        angle = endAngle;
-      }
-      svg.innerHTML = svgParts.join("");
-
-      legend.innerHTML = slices.map((kind) => {
-        const count = counts[kind];
-        const pct = Math.round((count / total) * 100);
-        const href = "#claims?kind=" + encodeURIComponent(kind);
-        return (
-          '<li><a href="' + href + '" class="kind-legend-link">' +
-            '<span class="claim-kinds-swatch" style="background:' + CLAIM_KIND_COLORS[kind] + '"></span>' +
-            '<span class="kind-label">' + escapeHtmlClient(kind) + "</span>" +
-            '<span class="kind-stat">' + count + " · " + pct + "%</span>" +
-          "</a></li>"
-        );
-      }).join("");
-
-      if (meta) meta.textContent = total + " active claims · click a slice or legend row to filter Claims";
-    }
-
-    function parseHash() {
-      const raw = location.hash.replace(/^#/, "") || "components";
-      const question = raw.indexOf("?");
-      const viewId = question === -1 ? raw : raw.slice(0, question);
-      const query = question === -1 ? "" : raw.slice(question + 1);
-      const params = new URLSearchParams(query);
-      return {
-        viewId: viewId || "components",
-        commitFilter: viewId === "claims" ? params.get("commit") : null,
-        claimFilter: viewId === "claims" ? params.get("claim") : null,
-        kindFilter: viewId === "claims" ? params.get("kind") : null,
-      };
-    }
+    let activeFilter = null;
 
     function escapeHtmlClient(value) {
       return String(value)
@@ -767,9 +889,196 @@ ${timelineEvents}
         .replace(/"/g, "&quot;");
     }
 
-    function shortCommitId(commitId) {
-      if (!commitId) return "";
-      return commitId.length > 20 ? commitId.slice(0, 17) + "…" : commitId;
+    function capitalizeLabel(value) {
+      const text = String(value);
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    const overviewCharts = {};
+
+    function resizeOverviewCharts() {
+      requestAnimationFrame(() => {
+        for (const chart of Object.values(overviewCharts)) chart.resize();
+      });
+    }
+
+    function navigateToClaims(href) {
+      if (claimsSearchInput) claimsSearchInput.value = "";
+      history.replaceState(null, "", href);
+      viewFromHash();
+    }
+
+    function setOverviewChartHighlight(canvasId, index) {
+      const chart = overviewCharts[canvasId];
+      if (!chart) return;
+      if (index === null) {
+        chart.setActiveElements([]);
+        chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+      } else {
+        const active = [{ datasetIndex: 0, index }];
+        chart.setActiveElements(active);
+        const arc = chart.getDatasetMeta(0).data[index];
+        const position = arc && typeof arc.x === "number" && typeof arc.y === "number"
+          ? { x: arc.x, y: arc.y }
+          : { x: chart.width / 2, y: chart.height / 2 };
+        chart.tooltip.setActiveElements(active, position);
+      }
+      chart.update("none");
+    }
+
+    function wireOverviewLegendHover(legendId, canvasId) {
+      const legend = document.getElementById(legendId);
+      if (!legend || legend.dataset.hoverWired === "1") return;
+      legend.dataset.hoverWired = "1";
+      legend.dataset.canvasId = canvasId;
+      legend.addEventListener("mouseover", (event) => {
+        const link = event.target.closest("a.legend-link");
+        if (!link || !legend.contains(link)) return;
+        const item = link.closest("li");
+        if (!item) return;
+        const index = [...legend.querySelectorAll("li")].indexOf(item);
+        if (index >= 0) setOverviewChartHighlight(legend.dataset.canvasId, index);
+      });
+      legend.addEventListener("mouseleave", () => {
+        setOverviewChartHighlight(legend.dataset.canvasId, null);
+      });
+    }
+
+    function renderOverviewLegend(legendId, slices) {
+      const legend = document.getElementById(legendId);
+      if (!legend) return;
+      const drawn = slices.filter((slice) => slice.count > 0);
+      if (drawn.length === 0) {
+        legend.innerHTML = "";
+        return;
+      }
+      legend.innerHTML = drawn
+        .map(
+          (slice) =>
+            '<li><a href="' + slice.href + '" class="legend-link">' +
+              '<span class="legend-swatch" style="background:' + slice.color + '"></span>' +
+              '<span class="legend-label">' + escapeHtmlClient(capitalizeLabel(slice.label)) + "</span>" +
+              '<span class="legend-count">' + slice.count + "</span>" +
+            "</a></li>"
+        )
+        .join("");
+    }
+
+    function renderOverviewChart(canvasId, legendId, slices) {
+      const drawn = slices.filter((slice) => slice.count > 0);
+      const total = drawn.reduce((sum, slice) => sum + slice.count, 0);
+
+      renderOverviewLegend(legendId, slices);
+
+      const canvas = document.getElementById(canvasId);
+      if (!canvas || typeof Chart === "undefined") return;
+
+      if (!overviewCharts[canvasId]) {
+        if (total === 0) return;
+
+        canvas.width = 260;
+        canvas.height = 260;
+
+        overviewCharts[canvasId] = new Chart(canvas, {
+        type: "pie",
+        data: {
+          labels: drawn.map((slice) => slice.label),
+          datasets: [{
+            data: drawn.map((slice) => slice.count),
+            backgroundColor: drawn.map((slice) => slice.color),
+            borderWidth: 0,
+            hoverOffset: 0,
+          }],
+        },
+        options: {
+          responsive: false,
+          animation: false,
+          animations: {
+            colors: false,
+            numbers: false,
+          },
+          transitions: {
+            active: { animation: { duration: 0 } },
+          },
+          onClick: (_event, elements) => {
+            if (elements.length > 0) navigateToClaims(drawn[elements[0].index].href);
+          },
+          plugins: {
+            legend: { display: false },
+            datalabels: {
+              color: "#fff",
+              font: { weight: "600", size: 13 },
+              formatter: (value, context) => {
+                const data = context.chart.data.datasets[0].data;
+                const sum = data.reduce((a, b) => a + b, 0);
+                const pct = Math.round((value / sum) * 100);
+                return pct >= 8 ? pct + "%" : "";
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const sum = context.dataset.data.reduce((a, b) => a + b, 0);
+                  const pct = Math.round((context.parsed / sum) * 100);
+                  return " " + context.parsed + " (" + pct + "%)";
+                },
+              },
+            },
+          },
+        },
+      });
+      }
+
+      wireOverviewLegendHover(legendId, canvasId);
+    }
+
+    function renderOverview() {
+      const typeCounts = Object.fromEntries(CLAIM_KIND_ORDER.map((kind) => [kind, 0]));
+      for (const claim of graphData.claims) {
+        if (typeCounts[claim.kind] === undefined) typeCounts[claim.kind] = 0;
+        typeCounts[claim.kind] += 1;
+      }
+      const typeSlices = Object.keys(typeCounts)
+        .filter((kind) => typeCounts[kind] > 0)
+        .map((kind) => ({
+          label: kind,
+          count: typeCounts[kind],
+          color: CLAIM_KIND_COLORS[kind] || "#cdd2da",
+          href: "#claims?kind=" + encodeURIComponent(kind),
+        }));
+      renderOverviewChart("chart-type", "legend-type", typeSlices);
+
+      let codeCount = 0;
+      let sessionCount = 0;
+      for (const claim of graphData.claims) {
+        if (claim.source === "session") sessionCount += 1;
+        else codeCount += 1;
+      }
+      renderOverviewChart("chart-source", "legend-source", [
+        { label: "from code", count: codeCount, color: SOURCE_COLORS.code, href: "#claims?source=code" },
+        { label: "from session", count: sessionCount, color: SOURCE_COLORS.session, href: "#claims?source=session" },
+      ]);
+
+      renderOverviewChart("chart-freshness", "legend-freshness", [
+        { label: "active", count: graphData.counts.claims, color: FRESHNESS_COLORS.active, href: "#claims?freshness=active" },
+        { label: "superseded", count: graphData.counts.superseded, color: FRESHNESS_COLORS.superseded, href: "#claims?freshness=superseded" },
+      ]);
+    }
+
+    function parseHash() {
+      const raw = location.hash.replace(/^#/, "") || "components";
+      const question = raw.indexOf("?");
+      const viewId = question === -1 ? raw : raw.slice(0, question);
+      const params = new URLSearchParams(question === -1 ? "" : raw.slice(question + 1));
+      return { viewId: viewId || "components", params };
+    }
+
+    function filterFromParams(params) {
+      for (const type of ["component", "flow", "kind", "source", "freshness", "commit"]) {
+        const value = params.get(type);
+        if (value) return { type, value };
+      }
+      return null;
     }
 
     function formatDateTimeClient(iso) {
@@ -785,115 +1094,134 @@ ${timelineEvents}
       });
     }
 
-    function applyClaimsFilter(commitFilter, claimFilter, kindFilter) {
+    function describeFilter(filter) {
+      switch (filter.type) {
+        case "component":
+          return "about " + (componentNameById.get(filter.value) || filter.value);
+        case "flow":
+          return "about " + (flowNameById.get(filter.value) || filter.value);
+        case "kind":
+          return "of type " + filter.value;
+        case "source":
+          return filter.value === "session" ? "from session" : "from code";
+        case "freshness":
+          return filter.value === "superseded" ? "superseded" : "active";
+        case "commit": {
+          const event = graphData.claimsTimeline.events.find((item) => item.memoryCommitId === filter.value);
+          if (event && event.createdAt) return "from commit on " + formatDateTimeClient(event.createdAt);
+          return "from selected commit";
+        }
+        default:
+          return "";
+      }
+    }
+
+    function rowMatchesFilter(row, filter) {
+      const freshness = row.dataset.freshness;
+      if (!filter) return freshness === "active";
+      if (filter.type === "freshness") return freshness === filter.value;
+      if (freshness !== "active") return false;
+      if (filter.type === "kind") return row.dataset.kind === filter.value;
+      if (filter.type === "source") return row.dataset.source === filter.value;
+      if (filter.type === "commit") return row.dataset.memoryCommitId === filter.value;
+      if (filter.type === "component") {
+        return (componentIdsByClaim.get(row.dataset.id) || []).includes(filter.value);
+      }
+      if (filter.type === "flow") {
+        return (flowIdsByClaim.get(row.dataset.id) || []).includes(filter.value);
+      }
+      return true;
+    }
+
+    function applyClaims() {
+      const query = (claimsSearchInput && claimsSearchInput.value ? claimsSearchInput.value : "").trim().toLowerCase();
+      const filter = activeFilter;
       let visible = 0;
       for (const row of claimRows) {
-        const matchesCommit = !commitFilter || row.dataset.memoryCommitId === commitFilter;
-        const matchesClaim = !claimFilter || row.dataset.id === claimFilter;
-        const matchesKind = !kindFilter || row.dataset.kind === kindFilter;
-        const matches = matchesCommit && matchesClaim && matchesKind;
-        row.classList.toggle("claim-row-hidden", !matches);
-        row.classList.toggle("claim-row-highlight", Boolean(claimFilter && row.dataset.id === claimFilter));
-        if (matches) visible += 1;
+        const id = row.dataset.id || "";
+        const matchesFilter = rowMatchesFilter(row, filter);
+        const text = (claimTextById.get(id) || "").toLowerCase();
+        const matchesSearch = !query || id.toLowerCase().includes(query) || text.includes(query);
+        const vis = matchesFilter && matchesSearch;
+        row.classList.toggle("claim-row-hidden", !vis);
+        if (vis) visible += 1;
       }
+      if (!claimsMeta) return;
 
-      if (!commitFilter && !claimFilter && !kindFilter) {
+      if (!filter && !query) {
         claimsMeta.textContent = defaultClaimsMeta;
         return;
       }
 
-      if (claimFilter && !commitFilter && !kindFilter) {
-        claimsMeta.innerHTML = visible + " claim · <code>" + escapeHtmlClient(claimFilter) + '</code> · <a class="filter-clear" href="#claims">Clear filter</a>';
-        return;
-      }
-
-      if (kindFilter && !commitFilter && !claimFilter) {
-        claimsMeta.innerHTML = visible + " of " + graphData.claims.length + ' claims · kind <code>' + escapeHtmlClient(kindFilter) + '</code> · <a class="filter-clear" href="#claims">Clear filter</a>';
-        return;
-      }
-
-      const event = graphData.claimsTimeline.events.find((item) => item.memoryCommitId === commitFilter);
-      const dateLabel = event ? formatDateTimeClient(event.createdAt) : "";
-
-      if (visible === 0) {
-        let emptyMeta = "No matching claims";
-        if (commitFilter) emptyMeta += " for commit <code>" + escapeHtmlClient(shortCommitId(commitFilter)) + "</code>";
-        if (kindFilter) emptyMeta += (commitFilter ? " ·" : "") + " kind <code>" + escapeHtmlClient(kindFilter) + "</code>";
-        claimsMeta.innerHTML = emptyMeta + ' · <a class="filter-clear" href="#claims">Clear filter</a>';
-        return;
-      }
-
-      let meta = visible + " of " + graphData.claims.length + " claims";
-      if (commitFilter) meta += " · commit <code>" + escapeHtmlClient(shortCommitId(commitFilter)) + "</code>";
-      if (kindFilter) meta += " · kind <code>" + escapeHtmlClient(kindFilter) + "</code>";
-      if (commitFilter && dateLabel) meta += " · " + dateLabel;
+      const base =
+        filter && filter.type === "freshness" && filter.value === "superseded"
+          ? graphData.counts.superseded
+          : filter && filter.type === "commit"
+            ? (graphData.claimsTimeline.events.find((item) => item.memoryCommitId === filter.value)?.added ?? graphData.counts.claims)
+            : graphData.counts.claims;
+      let meta = visible + " of " + base + " claims";
+      if (filter) meta += " " + describeFilter(filter);
+      if (query) meta += ' matching "' + escapeHtmlClient(query) + '"';
       meta += ' · <a class="filter-clear" href="#claims">Clear filter</a>';
       claimsMeta.innerHTML = meta;
     }
 
-    function showView(viewId, commitFilter, claimFilter, kindFilter) {
+    function showView(viewId, filter) {
       for (const link of links) {
         link.classList.toggle("active", link.dataset.view === viewId);
       }
       for (const view of views) view.classList.toggle("active", view.dataset.view === viewId);
-      applyClaimsFilter(
-        viewId === "claims" ? commitFilter : null,
-        viewId === "claims" ? claimFilter : null,
-        viewId === "claims" ? kindFilter : null,
-      );
-      if (viewId === "claim-kinds") {
-        renderClaimKindsChart();
+      if (viewId === "claims") {
+        activeFilter = filter || null;
+        applyClaims();
       }
-      if (viewId === "claims" && (commitFilter || claimFilter || kindFilter)) {
-        const target = claimFilter
-          ? document.querySelector('#claims-table tbody tr[data-id="' + claimFilter + '"]')
-          : null;
-        (target ?? claimsView).scrollIntoView({ behavior: "smooth", block: "start" });
+      if (viewId === "claims-overview") {
+        renderOverview();
+        resizeOverviewCharts();
       }
     }
 
     function viewFromHash() {
-      const { viewId, commitFilter, claimFilter, kindFilter } = parseHash();
+      const { viewId, params } = parseHash();
       const resolvedView = [...views].some((view) => view.dataset.view === viewId) ? viewId : "components";
-      showView(resolvedView, commitFilter, claimFilter, kindFilter);
+      showView(resolvedView, resolvedView === "claims" ? filterFromParams(params) : null);
     }
 
     for (const link of links) {
       link.addEventListener("click", (event) => {
         event.preventDefault();
         history.replaceState(null, "", "#" + link.dataset.view);
-        showView(link.dataset.view, null, null, null);
+        viewFromHash();
       });
     }
 
     document.addEventListener("click", (event) => {
-      const clearLink = event.target.closest("a.filter-clear");
-      if (clearLink) {
+      const filterClear = event.target.closest("a.filter-clear");
+      if (filterClear) {
         event.preventDefault();
+        if (claimsSearchInput) claimsSearchInput.value = "";
         history.replaceState(null, "", "#claims");
-        showView("claims", null, null, null);
-        return;
-      }
-      const kindLink = event.target.closest("a.pie-slice-link, a.kind-legend-link");
-      if (kindLink && kindLink.getAttribute("href")?.startsWith("#")) {
-        event.preventDefault();
-        const href = kindLink.getAttribute("href").slice(1);
-        history.replaceState(null, "", "#" + href);
         viewFromHash();
         return;
       }
-      const timelineLink = event.target.closest("a.timeline-link, a.timeline-summary-link");
-      if (timelineLink && timelineLink.getAttribute("href")?.startsWith("#")) {
+      const filterLink = event.target.closest("a.legend-link, a.component-claims-link, a.flow-claims-link, a.tl-link");
+      if (filterLink && filterLink.getAttribute("href") && filterLink.getAttribute("href").startsWith("#")) {
         event.preventDefault();
-        const href = timelineLink.getAttribute("href").slice(1);
-        history.replaceState(null, "", "#" + href);
+        if (claimsSearchInput) claimsSearchInput.value = "";
+        history.replaceState(null, "", filterLink.getAttribute("href"));
         viewFromHash();
       }
     });
 
+    if (claimsSearchInput) claimsSearchInput.addEventListener("input", applyClaims);
+
+    const overviewNavLink = document.querySelector('nav a[data-view="claims-overview"]');
+    if (overviewNavLink) {
+      overviewNavLink.addEventListener("mouseenter", () => renderOverview(), { once: true });
+    }
+
     window.addEventListener("hashchange", viewFromHash);
     viewFromHash();
-    renderClaimKindsChart();
   </script>
 </body>
 </html>

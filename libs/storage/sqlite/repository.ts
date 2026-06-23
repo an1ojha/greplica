@@ -188,6 +188,19 @@ export class SqliteRepository {
     return scope;
   }
 
+  readSupersededClaims(repoId: string): Claim[] {
+    const scopeIds = this.currentScopeIds(repoId);
+    const memberships = this.membershipsForScopes(scopeIds);
+    const rawEdges = this.loadEdges(selectIds(memberships, "edge"));
+    const supersededIds = new Set(
+      rawEdges
+        .filter((edge) => edge.kind === "supersedes" && edge.to_type === "claim")
+        .map((edge) => edge.to_id),
+    );
+    const claimIds = selectIds(memberships, "claim").filter((id) => supersededIds.has(id));
+    return this.loadClaims(claimIds);
+  }
+
   readClaimProvenance(repoId: string): ClaimProvenanceRecord[] {
     return this.db
       .prepare(

@@ -90,7 +90,8 @@ export class KnowledgeGraphService {
     const initialized = this.ensureInitialized(input);
     const graph = this.repository.readGraphView(initialized.repo_id);
     const provenance = this.repository.readClaimProvenance(initialized.repo_id);
-    return buildGraphViewHtml(graph, provenance, { repoName: input.repo_name });
+    const supersededClaims = this.repository.readSupersededClaims(initialized.repo_id);
+    return buildGraphViewHtml(graph, provenance, supersededClaims, { repoName: input.repo_name });
   }
 
   async contextGraph(input: RepoRef, query: string): Promise<GraphContextResult> {
