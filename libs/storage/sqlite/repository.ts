@@ -107,10 +107,14 @@ export class SqliteRepository {
     return this.db.prepare("SELECT * FROM repos WHERE root_path = ?").get(rootPath) as RepoRecord | undefined;
   }
 
-  requireRepo(remoteUrl: string): RepoRecord {
-    const repo = this.getRepoByRemote(remoteUrl);
+  getRepo(input: UpsertRepoInput): RepoRecord | undefined {
+    return this.findRepo(input)?.repo;
+  }
+
+  requireRepo(input: UpsertRepoInput): RepoRecord {
+    const repo = this.getRepo(input);
     if (!repo) {
-      throw new Error(`Repo memory is not ready for ${remoteUrl}. Run 'greplica doctor' to diagnose setup.`);
+      throw new Error("Greplica is not installed for this repo. Run greplica install --platform <codex|claude|opencode> --embedding local from the repo you want to use.");
     }
     return repo;
   }
@@ -184,7 +188,15 @@ export class SqliteRepository {
     const scope = this.db
       .prepare("SELECT * FROM graph_scopes WHERE repo_id = ? AND kind = 'working' AND name = 'working'")
       .get(repoId) as GraphScope | undefined;
-    if (!scope) throw new Error("Working scope is missing. Run 'greplica doctor' to diagnose setup.");
+    if (!scope) throw new Error("Working scope is missing. Run 'greplica install --platform <codex|claude|opencode> --embedding local' from this repo.");
+    return scope;
+  }
+
+  requireMainScope(repoId: string): GraphScope {
+    const scope = this.db
+      .prepare("SELECT * FROM graph_scopes WHERE repo_id = ? AND kind = 'main' ORDER BY created_at LIMIT 1")
+      .get(repoId) as GraphScope | undefined;
+    if (!scope) throw new Error("Main scope is missing. Run 'greplica install --platform <codex|claude|opencode> --embedding local' from this repo.");
     return scope;
   }
 

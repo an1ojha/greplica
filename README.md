@@ -135,7 +135,6 @@ Broader context-retrieval benchmarking, including SWE-Context benchmark work, is
 
 ```bash
 greplica install --platform codex|claude|opencode --embedding local|openai
-greplica init [--local|--openai]
 greplica config
 greplica doctor [--check-embeddings]
 greplica graph read
@@ -150,6 +149,6 @@ greplica proposal apply <proposal.json>
 
 `greplica graph context "<query>"` prints concise Markdown for coding-agent use. Use `--json` for compact structured output, or `--debug` for the full retrieval payload with ranking signals and embedding status.
 
-`greplica` automatically prepares memory state when commands run, so users should not need a separate init step.
+Run `greplica install` from each repo or folder where Greplica should work. Other commands require that repo to have been installed first.
 
 `greplica doctor` is for install verification and diagnosing failures, not a required preflight before every Greplica command.
